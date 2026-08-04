@@ -1,0 +1,13 @@
+[Unit]
+Description=Personal Profile Cloudflare Tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/junqeeager/.local/bin/cloudflared tunnel run personal-profile
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

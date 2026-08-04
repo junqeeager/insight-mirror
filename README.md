@@ -232,6 +232,25 @@ docker-compose up app
 docker-compose --profile scheduler up
 ```
 
+## 🚀 长期在线部署（systemd 用户服务）
+
+将 Web 与 Cloudflare 隧道注册为开机自启的用户级服务（无需 root）：
+
+```bash
+cp deploy/personal-profile-web.service deploy/personal-profile-tunnel.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now personal-profile-web.service personal-profile-tunnel.service
+loginctl enable-linger junqeeager   # 无登录会话时也保持运行
+```
+
+常用管理命令：
+
+```bash
+systemctl --user status personal-profile-web.service personal-profile-tunnel.service
+systemctl --user restart personal-profile-web.service
+journalctl --user -u personal-profile-web.service -f
+```
+
 ## 📝 获取 B站 Cookie
 
 1. 浏览器登录 bilibili.com

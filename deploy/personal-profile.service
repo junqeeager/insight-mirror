@@ -7,7 +7,8 @@ Type=simple
 User=junqeeager
 WorkingDirectory=/home/junqeeager/aicode
 ExecStartPre=/bin/bash -c 'pgrep -f "streamlit run" || /usr/bin/python3 -m streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true'
-ExecStart=/usr/local/bin/cloudflared tunnel run personal-profile
+# 推荐改用 deploy/personal-profile-web.service + deploy/personal-profile-tunnel.service（用户级 systemd）
+ExecStart=/home/junqeeager/.local/bin/cloudflared tunnel run personal-profile
 Restart=always
 RestartSec=10
 
