@@ -12,6 +12,7 @@ import pandas as pd
 import streamlit as st
 from core.utils import load_config
 from frontend.data_access import get_events, get_stats
+from frontend.auth import require_auth
 from frontend.layout import page_header, render_sidebar
 from frontend.theme import apply_theme
 
@@ -24,8 +25,9 @@ st.set_page_config(
 )
 
 config = load_config()
-stats = get_stats(config)
 apply_theme()
+require_auth()
+stats = get_stats(config)
 render_sidebar(config, stats)
 
 page_header("个人认知画像", "基于行为数据生成的兴趣画像与数据看板")

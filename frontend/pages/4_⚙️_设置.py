@@ -10,11 +10,17 @@ if project_root not in sys.path:
 import streamlit as st
 from core.database import Database
 from core.utils import load_config
+from frontend.auth import require_auth
 from frontend.data_access import get_events, get_stats
 from frontend.layout import page_header, render_sidebar
 from frontend.theme import apply_theme
 
 st.set_page_config(page_title="设置", page_icon="⚙️", layout="wide")
+
+config = load_config()
+apply_theme()
+require_auth()
+
 
 @st.cache_resource
 def get_database():
@@ -27,8 +33,6 @@ def get_database():
 db = get_database()
 db.init_tables()
 
-config = load_config()
-apply_theme()
 render_sidebar(config)
 page_header("设置", "管理数据源、数据库统计与配置文件")
 

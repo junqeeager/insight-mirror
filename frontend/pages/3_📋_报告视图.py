@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import datetime
 
 from core.utils import load_config
+from frontend.auth import require_auth
 from report.generator import ReportGenerator
 from frontend.data_access import (
     generate_profile,
@@ -28,6 +29,7 @@ st.set_page_config(page_title="报告视图", page_icon="📋", layout="wide")
 
 config = load_config()
 apply_theme()
+require_auth()
 render_sidebar(config)
 page_header("报告视图", "查看最近画像快照并生成完整 HTML 报告")
 

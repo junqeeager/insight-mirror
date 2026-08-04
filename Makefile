@@ -4,6 +4,7 @@ PYTHON ?= python3
 
 test:
 	$(PYTHON) tests/test_frontend_theme.py
+	$(PYTHON) tests/test_frontend_auth.py
 	$(PYTHON) tests/test_analysis.py
 	$(PYTHON) tests/test_plugins.py
 

@@ -17,6 +17,7 @@ import tempfile
 import os
 
 from core.utils import load_config
+from frontend.auth import require_auth
 from frontend.data_access import get_events, get_graph
 from frontend.layout import page_header, render_sidebar
 from frontend.theme import apply_theme
@@ -25,6 +26,7 @@ st.set_page_config(page_title="关系视图", page_icon="🕸️", layout="wide"
 
 config = load_config()
 apply_theme()
+require_auth()
 render_sidebar(config)
 page_header("关系视图", "查看兴趣关键词之间的关联与平台分布")
 

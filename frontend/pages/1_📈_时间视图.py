@@ -14,6 +14,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 from core.utils import load_config
+from frontend.auth import require_auth
 from frontend.data_access import get_events
 from frontend.layout import page_header, render_sidebar
 from frontend.theme import apply_theme
@@ -22,6 +23,7 @@ st.set_page_config(page_title="时间视图", page_icon="📈", layout="wide")
 
 config = load_config()
 apply_theme()
+require_auth()
 render_sidebar(config)
 page_header("时间视图", "按时间范围观察事件分布与活跃时段")
 

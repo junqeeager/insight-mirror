@@ -40,6 +40,7 @@ docker compose up app                  # run the app in Docker
 - `tests/test_analysis.py`, `tests/test_plugins.py`, `tests/test_api.py` are pytest-compatible; run `python tests/test_api.py` outside sandboxed shells (asyncio threadpools are blocked inside them).
 - `tests/test_graph.py` covers the precomputed interest graph used by `GET /api/v1/graph`.
 - `tests/test_frontend_theme.py` covers the Astryx theme assets and Streamlit selector mapping.
+- `tests/test_frontend_auth.py` covers the Streamlit password gate (AppTest + in-memory fake data).
 - Name test files `test_*.py` and functions `test_*()`.
 - Tests must be offline: use in-memory databases and sample data, never real cookies or live APIs.
 
@@ -54,5 +55,6 @@ docker compose up app                  # run the app in Docker
 ## Security & Configuration
 
 - Secrets live in `.env` (gitignored); `config.yaml` references them as `${VAR}` and never stores real values.
+- `APP_PASSWORD` in `.env` gates the public Streamlit dashboard (`frontend/auth.py`); the password is compared with `secrets.compare_digest` and is never committed.
 - Enable/disable sources and tune analysis via `config.yaml`; database URL defaults to `sqlite:///./data/profile.db`.
 - Redact cookies/tokens when showing config in the frontend settings page.

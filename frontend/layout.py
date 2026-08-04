@@ -26,6 +26,9 @@ def render_sidebar(config: dict, stats: Optional[dict] = None) -> dict:
             st.caption("暂无数据源")
         st.markdown("---")
         st.caption("数据由本地 SQLite 提供，页面响应走 FastAPI 缓存。")
+        if st.button("退出登录", width="stretch"):
+            st.session_state.pop("authenticated", None)
+            st.rerun()
     return stats
 
 
