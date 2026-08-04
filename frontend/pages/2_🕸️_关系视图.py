@@ -16,22 +16,13 @@ from datetime import datetime, timedelta
 import tempfile
 import os
 
-from core.database import Database
 from core.utils import load_config
 from analysis.keywords import segment_text
+from frontend.data_access import get_events
 
 st.set_page_config(page_title="关系视图", page_icon="🕸️", layout="wide")
 
-@st.cache_resource
-def get_database():
-    config = load_config()
-    db_path = config.get("database", {}).get("url", "sqlite:///./data/profile.db")
-    if db_path.startswith("sqlite:///"):
-        db_path = db_path[len("sqlite:///"):]
-    return Database(db_path)
-
-db = get_database()
-db.init_tables()
+config = load_config()
 
 st.title("🕸️ 关系视图")
 
@@ -46,7 +37,7 @@ elif period == "最近 30 天":
 else:
     since = now - timedelta(days=90)
 
-events = db.get_events(since=since, limit=5000)
+events = get_events(config, since=since, limit=5000)
 
 if not events:
     st.warning("暂无数据，请先同步数据源。")
@@ -72,8 +63,8 @@ keyword_freq = Counter()
 for keywords in event_keywords:
     for kw in keywords:
         keyword_freq[kw] += 1
-    # 取前 5 个关键词
-    top_kw = sorted(keyword_freq.keys(), key=lambda x: keyword_freq[x], reverse=True)[:5]
+    # 取该事件内权重最高的 5 个关键词（按全局频率排序）
+    top_kw = sorted(keywords, key=lambda x: keyword_freq[x], reverse=True)[:5]
     for i, kw1 in enumerate(top_kw):
         for kw2 in top_kw[i+1:]:
             if kw1 != kw2:
@@ -116,7 +107,7 @@ if G.nodes():
     # 嵌入 Streamlit
     with open(temp_path, "r") as f:
         html_content = f.read()
-    st.components.v1.html(html_content, height=650, scrolling=True)
+    st.html(html_content)
     os.unlink(temp_path)
 else:
     st.info("数据不足以生成关联网络，请增加数据量或调整筛选条件。")
@@ -141,7 +132,7 @@ if source_counts:
         showlegend=True,
         height=400,
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 # 标签云
 st.subheader("☁️ 标签云")

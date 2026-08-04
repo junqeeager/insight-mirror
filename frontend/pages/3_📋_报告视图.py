@@ -11,23 +11,11 @@ import streamlit as st
 from datetime import datetime
 from pathlib import Path
 
-from core.database import Database
 from core.utils import load_config
-from analysis.profile import ProfileGenerator
 from report.generator import ReportGenerator
+from frontend.data_access import generate_profile
 
 st.set_page_config(page_title="报告视图", page_icon="📋", layout="wide")
-
-@st.cache_resource
-def get_database():
-    config = load_config()
-    db_path = config.get("database", {}).get("url", "sqlite:///./data/profile.db")
-    if db_path.startswith("sqlite:///"):
-        db_path = db_path[len("sqlite:///"):]
-    return Database(db_path)
-
-db = get_database()
-db.init_tables()
 
 config = load_config()
 
@@ -40,10 +28,9 @@ col1, col2 = st.columns(2)
 with col1:
     period = st.selectbox("报告周期", ["weekly", "monthly", "yearly"])
 with col2:
-    if st.button("🚀 生成报告", use_container_width=True):
+    if st.button("🚀 生成报告", width="stretch"):
         with st.spinner("正在生成报告..."):
-            generator = ProfileGenerator(db, config.get("analysis", {}))
-            profile = generator.generate(period=period)
+            profile = generate_profile(config, period=period)
 
             report_gen = ReportGenerator()
             report_path = report_gen.generate_html(profile)
@@ -109,7 +96,7 @@ if "latest_profile" in st.session_state:
         st.subheader("🔗 完整报告")
         with open(report_path, "r") as f:
             html_content = f.read()
-        st.components.v1.html(html_content, height=800, scrolling=True)
+        st.html(html_content)
 
 # 历史报告列表
 st.markdown("---")
@@ -120,15 +107,11 @@ if reports_dir.exists():
     reports = sorted(reports_dir.glob("*.html"), reverse=True)
     if reports:
         for report in reports[:10]:
-            col1, col2, col3 = st.columns([3, 1, 1])
+            col1, col2 = st.columns([3, 1])
             with col1:
                 st.write(f"📄 {report.name}")
             with col2:
                 st.write(f"生成时间: {report.stat().st_mtime:.0f}")
-            with col3:
-                with open(report, "r") as f:
-                    html = f.read()
-                st.components.v1.html(html, height=0, width=0)
     else:
         st.info("暂无历史报告")
 else:

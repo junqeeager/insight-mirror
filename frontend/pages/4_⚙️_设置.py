@@ -10,6 +10,7 @@ if project_root not in sys.path:
 import streamlit as st
 from core.database import Database
 from core.utils import load_config
+from frontend.data_access import get_events, get_stats
 
 st.set_page_config(page_title="设置", page_icon="⚙️", layout="wide")
 
@@ -52,7 +53,7 @@ for source_name, source_config in sources.items():
 # 数据库统计
 st.subheader("📊 数据库统计")
 
-stats = db.get_stats()
+stats = get_stats(config)
 col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("总事件数", stats["total"])
@@ -86,7 +87,7 @@ with col1:
 
 with col2:
     if st.button("📥 导出数据", type="secondary"):
-        events = db.get_events(limit=10000)
+        events = get_events(config, limit=10000)
         import pandas as pd
         df = pd.DataFrame([
             {

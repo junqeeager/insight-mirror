@@ -78,6 +78,8 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
             CREATE INDEX IF NOT EXISTS idx_events_processed ON events(processed);
             CREATE INDEX IF NOT EXISTS idx_topics_category ON topics(category);
+            CREATE INDEX IF NOT EXISTS idx_event_topics_topic ON event_topics(topic_id);
+            CREATE INDEX IF NOT EXISTS idx_profiles_period ON profiles(period, timestamp);
         """)
         self.conn.commit()
 
@@ -111,12 +113,37 @@ class Database:
             return False
 
     def insert_events(self, events: List[Event]) -> int:
-        """批量插入事件，返回实际插入数量"""
-        count = 0
-        for event in events:
-            if self.insert_event(event):
-                count += 1
-        return count
+        """批量插入事件，返回实际插入数量（单事务）"""
+        if not events:
+            return 0
+        before = self.conn.total_changes
+        rows = [
+            (
+                event.id,
+                event.timestamp.isoformat(),
+                event.source,
+                event.event_type.value,
+                event.title,
+                event.url,
+                event.description,
+                json.dumps(event.tags, ensure_ascii=False),
+                event.duration,
+                event.progress,
+                event.depth.value,
+                json.dumps(event.metadata, ensure_ascii=False),
+                int(event.processed),
+            )
+            for event in events
+        ]
+        self.conn.executemany(
+            """INSERT OR IGNORE INTO events
+               (id, timestamp, source, event_type, title, url,
+                description, tags, duration, progress, depth, metadata, processed)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+        self.conn.commit()
+        return self.conn.total_changes - before
 
     def get_events(
         self,
@@ -155,6 +182,8 @@ class Database:
 
     def mark_processed(self, event_ids: List[str]):
         """标记事件为已处理"""
+        if not event_ids:
+            return
         placeholders = ",".join("?" for _ in event_ids)
         self.conn.execute(
             f"UPDATE events SET processed = 1 WHERE id IN ({placeholders})",

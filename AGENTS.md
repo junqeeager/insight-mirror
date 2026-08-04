@@ -21,6 +21,7 @@ python scripts/init_db.py              # create database schema
 python scripts/sync.py --source bilibili  # pull data from a source
 python scripts/generate_report.py --period weekly  # generate a report
 streamlit run frontend/app.py          # start dashboard on :8501
+uvicorn api.main:app --host 0.0.0.0 --port 8502  # start API service
 docker compose up app                  # run the app in Docker
 ```
 

@@ -9,8 +9,8 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import streamlit as st
-from core.database import Database
 from core.utils import load_config
+from frontend.data_access import get_events, get_stats
 
 # 页面配置
 st.set_page_config(
@@ -20,18 +20,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# 初始化数据库
-@st.cache_resource
-def get_database():
-    config = load_config()
-    db_path = config.get("database", {}).get("url", "sqlite:///./data/profile.db")
-    # 从 URL 中提取路径
-    if db_path.startswith("sqlite:///"):
-        db_path = db_path[len("sqlite:///"):]
-    return Database(db_path)
-
-db = get_database()
-db.init_tables()
+config = load_config()
+stats = get_stats(config)
 
 # 侧边栏
 with st.sidebar:
@@ -39,7 +29,6 @@ with st.sidebar:
     st.markdown("---")
 
     # 数据库统计
-    stats = db.get_stats()
     st.metric("总事件数", stats["total"])
     st.markdown("---")
 
@@ -67,7 +56,7 @@ st.markdown("---")
 
 # 最近事件
 st.subheader("📋 最近事件")
-recent_events = db.get_events(limit=20)
+recent_events = get_events(config, limit=20)
 if recent_events:
     for event in recent_events:
         with st.expander(f"{event.source} | {event.title[:50]}..."):
@@ -87,11 +76,11 @@ st.subheader("⚡ 快捷操作")
 
 col1, col2, col3 = st.columns(3)
 with col1:
-    if st.button("🔄 同步 B站数据", use_container_width=True):
+    if st.button("🔄 同步 B站数据", width="stretch"):
         st.info("请运行: python scripts/sync.py --source bilibili")
 with col2:
-    if st.button("📊 生成周报", use_container_width=True):
+    if st.button("📊 生成周报", width="stretch"):
         st.info("请运行: python scripts/generate_report.py --period weekly")
 with col3:
-    if st.button("📈 查看画像", use_container_width=True):
+    if st.button("📈 查看画像", width="stretch"):
         st.info("请访问侧边栏的画像页面")

@@ -13,21 +13,12 @@ import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime, timedelta
 
-from core.database import Database
 from core.utils import load_config
+from frontend.data_access import get_events
 
 st.set_page_config(page_title="时间视图", page_icon="📈", layout="wide")
 
-@st.cache_resource
-def get_database():
-    config = load_config()
-    db_path = config.get("database", {}).get("url", "sqlite:///./data/profile.db")
-    if db_path.startswith("sqlite:///"):
-        db_path = db_path[len("sqlite:///"):]
-    return Database(db_path)
-
-db = get_database()
-db.init_tables()
+config = load_config()
 
 st.title("📈 时间视图")
 
@@ -52,7 +43,8 @@ else:
     since = None
 
 # 获取数据
-events = db.get_events(
+events = get_events(
+    config,
     source=source_filter if source_filter != "全部" else None,
     event_type=event_filter if event_filter != "全部" else None,
     since=since,
@@ -93,7 +85,7 @@ fig_heatmap = px.imshow(
     color_continuous_scale="Blues",
 )
 fig_heatmap.update_layout(height=300)
-st.plotly_chart(fig_heatmap, use_container_width=True)
+st.plotly_chart(fig_heatmap, width="stretch")
 
 # 事件时间线
 st.subheader("📅 事件时间线")
@@ -107,7 +99,7 @@ fig_timeline = px.scatter(
     labels={"timestamp": "时间", "source": "来源", "type": "类型"},
 )
 fig_timeline.update_layout(height=400)
-st.plotly_chart(fig_timeline, use_container_width=True)
+st.plotly_chart(fig_timeline, width="stretch")
 
 # 来源分布
 st.subheader("📊 来源分布")
@@ -118,7 +110,7 @@ fig_source = px.pie(
     title="数据来源分布",
 )
 fig_source.update_layout(height=350)
-st.plotly_chart(fig_source, use_container_width=True)
+st.plotly_chart(fig_source, width="stretch")
 
 # 事件类型分布
 st.subheader("📈 事件类型分布")
@@ -130,4 +122,4 @@ fig_type = px.bar(
     labels={"x": "类型", "y": "数量"},
 )
 fig_type.update_layout(height=300)
-st.plotly_chart(fig_type, use_container_width=True)
+st.plotly_chart(fig_type, width="stretch")

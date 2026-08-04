@@ -2,6 +2,7 @@
 
 import sqlite3
 import shutil
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import List
@@ -112,10 +113,11 @@ class Plugin(DataSourcePlugin):
                 # 转换 Chrome 时间戳
                 ts = (last_visit_time / 1000000) - chrome_epoch_offset
                 timestamp = datetime.fromtimestamp(ts)
+                digest = hashlib.md5(url.encode("utf-8")).hexdigest()[:12]
 
                 events.append(
                     Event(
-                        id=f"browser-{hash(url)}-{int(ts)}",
+                        id=f"browser-{digest}-{int(ts)}",
                         timestamp=timestamp,
                         source="browser_history",
                         event_type=EventType.READ,

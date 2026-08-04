@@ -83,3 +83,13 @@ api/
 6. 批量写入 + 新索引；按数据规模评估 `aiosqlite` / PostgreSQL
 
 每步保持可独立验证：跑通 `pytest`、`python main.py`、报告生成与四个页面后，再进入下一步。
+
+## 实施状态（2026-08-04）
+
+- [x] `api/` 服务层：`/health`、`/api/v1/events`、`/topics`、`/profile/latest`、`/profile/refresh`（后台任务）、`/stats`
+- [x] 依赖管理：`fastapi`/`uvicorn` 加入 `requirements.txt`，新增 `requirements-dev.txt`（pytest）
+- [x] SQLite 优化：新增 `event_topics(topic_id)`、`profiles(period, timestamp)` 索引；`insert_events` 改为单事务批量写入
+- [x] 已知 bug 修复：LDA `fit_predict`、关系视图共现算法、`browser_history` 不稳定 `hash()`、Streamlit 弃用 API
+- [x] 前端迁移：新增 `frontend/data_access.py`（API 优先 + 直连回退），五个页面已切换到数据访问层
+- [x] API 测试：`tests/test_api.py`（TestClient + 临时数据库）
+- [ ] 数据规模达到数万条后再评估 `aiosqlite` / PostgreSQL（暂不实施）

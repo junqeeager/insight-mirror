@@ -56,7 +56,8 @@ def cluster_topics(
         model = LatentDirichletAllocation(
             n_components=n_clusters, random_state=42
         )
-        labels = model.fit_predict(tfidf_matrix)
+        transformed = model.fit_transform(tfidf_matrix)
+        labels = transformed.argmax(axis=1)
     else:
         return {0: events}
 
