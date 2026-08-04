@@ -11,14 +11,13 @@ import streamlit as st
 import plotly.graph_objects as go
 import networkx as nx
 from pyvis.network import Network
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime, timedelta
 import tempfile
 import os
 
 from core.utils import load_config
-from analysis.keywords import segment_text
-from frontend.data_access import get_events
+from frontend.data_access import get_events, get_graph
 
 st.set_page_config(page_title="关系视图", page_icon="🕸️", layout="wide")
 
@@ -43,32 +42,13 @@ if not events:
     st.warning("暂无数据，请先同步数据源。")
     st.stop()
 
-# 构建兴趣共现图
+# 兴趣关联网络（图谱由后端预计算，前端只做阈值过滤）
 st.subheader("🔗 兴趣关联网络")
 
-# 提取每个事件的关键词
-event_keywords = []
-for event in events:
-    text = event.title or ""
-    if event.description:
-        text += " " + event.description
-    keywords = set(segment_text(text))
-    if keywords:
-        event_keywords.append(keywords)
-
-# 构建共现矩阵
-co_occurrence = Counter()
-keyword_freq = Counter()
-
-for keywords in event_keywords:
-    for kw in keywords:
-        keyword_freq[kw] += 1
-    # 取该事件内权重最高的 5 个关键词（按全局频率排序）
-    top_kw = sorted(keywords, key=lambda x: keyword_freq[x], reverse=True)[:5]
-    for i, kw1 in enumerate(top_kw):
-        for kw2 in top_kw[i+1:]:
-            if kw1 != kw2:
-                co_occurrence[(kw1, kw2)] += 1
+window_days = {"最近 7 天": 7, "最近 30 天": 30, "最近 90 天": 90}[period]
+graph_data = get_graph(config, window_days=window_days)
+keyword_freq = {n["label"]: n["freq"] for n in graph_data["nodes"]}
+graph_edges = graph_data["edges"]
 
 # 过滤低频词
 min_freq = st.slider("最小出现次数", 1, 20, 3)
@@ -82,9 +62,13 @@ G = nx.Graph()
 for kw in filtered_keywords:
     G.add_node(kw, size=keyword_freq[kw])
 
-for (kw1, kw2), count in co_occurrence.items():
-    if kw1 in filtered_keywords and kw2 in filtered_keywords and count >= min_co:
-        G.add_edge(kw1, kw2, weight=count)
+for edge in graph_edges:
+    if (
+        edge["source"] in filtered_keywords
+        and edge["target"] in filtered_keywords
+        and edge["weight"] >= min_co
+    ):
+        G.add_edge(edge["source"], edge["target"], weight=edge["weight"])
 
 # 使用 pyvis 可视化
 if G.nodes():

@@ -1,5 +1,6 @@
 """工具函数"""
 
+import logging
 import os
 import yaml
 from pathlib import Path
@@ -9,6 +10,15 @@ try:
     HAS_DOTENV = True
 except ImportError:
     HAS_DOTENV = False
+
+
+def setup_logging(level: str = "INFO") -> None:
+    """配置全局日志（脚本入口调用一次）"""
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
 
 def load_config(config_path: str = "config.yaml") -> dict:

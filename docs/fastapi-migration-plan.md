@@ -92,4 +92,6 @@ api/
 - [x] 已知 bug 修复：LDA `fit_predict`、关系视图共现算法、`browser_history` 不稳定 `hash()`、Streamlit 弃用 API
 - [x] 前端迁移：新增 `frontend/data_access.py`（API 优先 + 直连回退），五个页面已切换到数据访问层
 - [x] API 测试：`tests/test_api.py`（TestClient + 临时数据库）
+- [x] 实时响应：`GET /api/v1/graph` 后端预计算（TTL 300s）；`frontend/data_access.py` 增加 TTL 缓存与回退日志；报告页改为后台任务非阻塞轮询；API 启动时预热 jieba
+- [x] 轻量工程化：`core/utils.setup_logging()`、脚本日志化、全局异常处理器、Makefile（test/test-api/run-api/run-web/sync）
 - [ ] 数据规模达到数万条后再评估 `aiosqlite` / PostgreSQL（暂不实施）

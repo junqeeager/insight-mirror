@@ -90,6 +90,41 @@ personal-profile/
     ├── init_db.py          # 初始化数据库
     ├── sync.py             # 数据同步
     └── generate_report.py  # 生成报告
+
+│
+├── api/                     # FastAPI 服务层
+│   ├── main.py             # 应用入口（含 jieba 预热与全局异常处理）
+│   └── routers/            # /events /topics /profile /stats /graph
+│
+└── docs/                    # 设计文档（含 FastAPI 迁移规划）
+```
+
+## 🌐 API 服务
+
+```bash
+make run-api   # 等价于 uvicorn api.main:app --host 0.0.0.0 --port 8502
+```
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET /health` | 存活检查 |
+| `GET /api/v1/events` | 事件查询（source/event_type/since/limit） |
+| `GET /api/v1/topics` | 主题查询 |
+| `GET /api/v1/stats` | 数据库统计 |
+| `GET /api/v1/profile/latest` | 最近画像快照 |
+| `POST /api/v1/profile/refresh` | 后台重建画像 |
+| `GET /api/v1/graph` | 兴趣共现图（后端预计算，5 分钟缓存） |
+
+Streamlit 通过 `frontend/data_access.py` 优先调用 API，API 不可用时自动回退直连 SQLite；数据结果带 TTL 缓存（30s/60s/300s），保证低流量个人项目的实时响应。
+
+## 🧪 测试与开发命令
+
+```bash
+make test       # 分析 + 插件测试
+make test-api   # API 测试（需在非沙箱环境运行）
+make init-db    # 初始化数据库
+make sync       # 同步所有数据源
+make run-web    # 启动 Streamlit
 ```
 
 ## 🔌 添加新数据源

@@ -1,5 +1,6 @@
 """初始化数据库"""
 
+import logging
 import sys
 from pathlib import Path
 
@@ -9,12 +10,15 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from core.database import Database
-from core.utils import load_config
+from core.utils import load_config, setup_logging
+
+logger = logging.getLogger("init_db")
 
 
 def main():
     """初始化数据库"""
-    print("🔧 初始化数据库...")
+    setup_logging()
+    logger.info("🔧 初始化数据库...")
 
     # 加载配置
     config = load_config()
@@ -28,8 +32,8 @@ def main():
     db = Database(db_path)
     db.init_tables()
 
-    print(f"✅ 数据库已初始化: {db_path}")
-    print(f"📊 当前事件数: {db.get_event_count()}")
+    logger.info("✅ 数据库已初始化: %s", db_path)
+    logger.info("📊 当前事件数: %d", db.get_event_count())
 
     db.close()
 

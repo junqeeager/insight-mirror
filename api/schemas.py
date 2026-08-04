@@ -127,3 +127,26 @@ class TaskStatusOut(BaseModel):
     status: str
     profile_id: Optional[str] = None
     error: Optional[str] = None
+
+
+class GraphNode(BaseModel):
+    """图谱节点"""
+
+    id: str
+    label: str
+    freq: int
+
+
+class GraphEdge(BaseModel):
+    """图谱边"""
+
+    source: str
+    target: str
+    weight: int
+
+
+class GraphOut(BaseModel):
+    """兴趣共现图响应"""
+
+    nodes: List[GraphNode] = Field(default_factory=list)
+    edges: List[GraphEdge] = Field(default_factory=list)

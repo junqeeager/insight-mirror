@@ -8,18 +8,35 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import streamlit as st
-from datetime import datetime
+import time
 from pathlib import Path
+
+from datetime import datetime
 
 from core.utils import load_config
 from report.generator import ReportGenerator
-from frontend.data_access import generate_profile
+from frontend.data_access import (
+    generate_profile,
+    get_latest_profile,
+    get_task_status,
+    start_profile_refresh,
+)
 
 st.set_page_config(page_title="报告视图", page_icon="📋", layout="wide")
 
 config = load_config()
 
 st.title("📋 报告视图")
+
+
+def _finish_report(profile, period: str):
+    """生成 HTML 报告并写入会话状态"""
+    report_gen = ReportGenerator()
+    report_path = report_gen.generate_html(profile)
+    st.success(f"报告已生成！")
+    st.session_state["latest_profile"] = profile
+    st.session_state["latest_report_path"] = report_path
+
 
 # 生成报告
 st.subheader("📊 生成新报告")
@@ -29,15 +46,47 @@ with col1:
     period = st.selectbox("报告周期", ["weekly", "monthly", "yearly"])
 with col2:
     if st.button("🚀 生成报告", width="stretch"):
-        with st.spinner("正在生成报告..."):
-            profile = generate_profile(config, period=period)
+        task_id = start_profile_refresh(config, period=period)
+        if task_id:
+            # 后台任务模式：立即返回，页面轮询状态
+            st.session_state["refresh_task_id"] = task_id
+            st.session_state["refresh_period"] = period
+            st.session_state["refresh_attempts"] = 0
+        else:
+            # API 不可用：回退为本地同步生成
+            with st.spinner("正在生成报告..."):
+                profile = generate_profile(config, period=period)
+            _finish_report(profile, period)
 
-            report_gen = ReportGenerator()
-            report_path = report_gen.generate_html(profile)
-
-            st.success(f"报告已生成！")
-            st.session_state["latest_profile"] = profile
-            st.session_state["latest_report_path"] = report_path
+# 后台任务轮询（非阻塞）
+task_id = st.session_state.get("refresh_task_id")
+if task_id:
+    status = get_task_status(config, task_id)
+    if status is None:
+        st.warning("暂时无法连接 API，任务状态未知；请稍后刷新页面查看。")
+    elif status["status"] in ("running", "started"):
+        attempts = st.session_state.get("refresh_attempts", 0) + 1
+        st.session_state["refresh_attempts"] = attempts
+        st.info(f"画像正在后台生成中…（{attempts}/30，任务 {task_id[:8]}）")
+        if attempts <= 30:
+            time.sleep(1)
+            st.rerun()
+        else:
+            st.warning("生成超时，请稍后手动刷新页面查看。")
+    elif status["status"] == "done":
+        period_now = st.session_state.get("refresh_period", "weekly")
+        profile = get_latest_profile(config, period=period_now, fresh=True)
+        st.session_state.pop("refresh_task_id", None)
+        st.session_state.pop("refresh_attempts", None)
+        st.session_state.pop("refresh_period", None)
+        if profile:
+            _finish_report(profile, period_now)
+        st.rerun()
+    else:
+        st.error(f"生成失败：{status.get('error')}")
+        st.session_state.pop("refresh_task_id", None)
+        st.session_state.pop("refresh_attempts", None)
+        st.session_state.pop("refresh_period", None)
 
 # 显示最新报告
 if "latest_profile" in st.session_state:

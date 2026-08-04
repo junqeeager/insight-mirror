@@ -116,6 +116,26 @@ def test_refresh_task():
     assert body["profile_id"]
 
 
+def test_graph_endpoint_and_cache():
+    _seed()
+    r = client.get("/api/v1/graph", params={"window_days": 90})
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) == {"nodes", "edges"}
+    assert body["nodes"], "图谱节点不应为空"
+    assert body["edges"], "图谱边不应为空"
+
+    # 命中缓存：第二次响应一致
+    r2 = client.get("/api/v1/graph", params={"window_days": 90})
+    assert r2.status_code == 200
+    assert r2.json() == body
+
+
+def test_graph_invalid_window():
+    r = client.get("/api/v1/graph", params={"window_days": 0})
+    assert r.status_code == 422
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

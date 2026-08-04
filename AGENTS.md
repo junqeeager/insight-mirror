@@ -22,6 +22,8 @@ python scripts/sync.py --source bilibili  # pull data from a source
 python scripts/generate_report.py --period weekly  # generate a report
 streamlit run frontend/app.py          # start dashboard on :8501
 uvicorn api.main:app --host 0.0.0.0 --port 8502  # start API service
+make test                              # run analysis + plugin tests
+make test-api                          # run API tests (outside sandboxed shells)
 docker compose up app                  # run the app in Docker
 ```
 
@@ -36,6 +38,7 @@ docker compose up app                  # run the app in Docker
 
 - Run tests directly: `python tests/test_basic.py` and `python tests/test_models.py`.
 - `tests/test_analysis.py`, `tests/test_plugins.py`, `tests/test_api.py` are pytest-compatible; run `python tests/test_api.py` outside sandboxed shells (asyncio threadpools are blocked inside them).
+- `tests/test_graph.py` covers the precomputed interest graph used by `GET /api/v1/graph`.
 - Name test files `test_*.py` and functions `test_*()`.
 - Tests must be offline: use in-memory databases and sample data, never real cookies or live APIs.
 
