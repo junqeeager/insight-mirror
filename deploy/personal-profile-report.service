@@ -1,0 +1,13 @@
+[Unit]
+Description=Personal Profile - daily weekly report generation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=junqeeager
+WorkingDirectory=/home/junqeeager/aicode
+ExecStart=/usr/bin/python3 scripts/generate_report.py --period weekly
+
+# 安装：sudo cp deploy/personal-profile-report.{service,timer} /etc/systemd/system/ &&
+#       sudo systemctl daemon-reload && sudo systemctl enable --now personal-profile-report.timer

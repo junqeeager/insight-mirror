@@ -1,0 +1,13 @@
+[Unit]
+Description=Personal Profile - hourly data sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=junqeeager
+WorkingDirectory=/home/junqeeager/aicode
+ExecStart=/usr/bin/python3 scripts/sync.py
+
+# 安装：sudo cp deploy/personal-profile-sync.{service,timer} /etc/systemd/system/ &&
+#       sudo systemctl daemon-reload && sudo systemctl enable --now personal-profile-sync.timer

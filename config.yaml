@@ -1,0 +1,78 @@
+# 个人认知画像系统配置
+
+# 系统配置
+system:
+  data_dir: ./data
+  plugins_dir: ./plugins
+  log_level: INFO
+  timezone: Asia/Shanghai
+
+# 数据库配置
+database:
+  url: sqlite:///./data/profile.db
+
+# 数据源配置
+sources:
+  bilibili:
+    enabled: true
+    plugin: bilibili
+    config:
+      cookie: "${BILIBILI_COOKIE}"
+      csrf: "${BILIBILI_CSRF}"
+    sync:
+      interval: hourly
+      max_per_sync: 200
+
+  browser_history:
+    enabled: false
+    plugin: browser_history
+    config:
+      browser: chrome
+      history_path: auto
+    sync:
+      interval: hourly
+      max_per_sync: 500
+
+  github:
+    enabled: false
+    plugin: github
+    config:
+      token: "${GITHUB_TOKEN}"
+      username: "${GITHUB_USERNAME}"
+      include_repos: []
+    sync:
+      interval: daily
+      max_per_sync: 100
+
+  rss:
+    enabled: false
+    plugin: rss
+    config:
+      feeds: []
+    sync:
+      interval: daily
+
+# 画像分析配置
+analysis:
+  keyword:
+    top_n: 20
+    min_frequency: 3
+  clustering:
+    algorithm: kmeans
+    n_clusters: 5
+    min_cluster_size: 10
+  trends:
+    window_size: 7
+    significance_threshold: 0.1
+
+# 报告配置
+report:
+  output_dir: ./data/reports
+  format: html
+  templates_dir: ./report/templates
+
+# 可视化配置
+visualization:
+  theme: dark
+  color_palette: default
+  max_nodes_graph: 50

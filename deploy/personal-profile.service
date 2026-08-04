@@ -1,0 +1,15 @@
+[Unit]
+Description=Personal Profile System (Streamlit + Cloudflare Tunnel)
+After=network.target
+
+[Service]
+Type=simple
+User=junqeeager
+WorkingDirectory=/home/junqeeager/aicode
+ExecStartPre=/bin/bash -c 'pgrep -f "streamlit run" || /usr/bin/python3 -m streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true'
+ExecStart=/usr/local/bin/cloudflared tunnel run personal-profile
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
