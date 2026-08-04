@@ -10,7 +10,7 @@ from typing import List, Optional
 import httpx
 
 from core.models import Depth, Event, EventType, Profile, Topic
-from core.database import Database
+from core.database import Database, database_url
 from analysis.profile import ProfileGenerator
 
 logger = logging.getLogger("frontend.data_access")
@@ -64,10 +64,7 @@ def _api_base(config: dict) -> str:
 
 
 def _db(config: dict) -> Database:
-    db_path = config.get("database", {}).get("url", "sqlite:///./data/profile.db")
-    if db_path.startswith("sqlite:///"):
-        db_path = db_path[len("sqlite:///"):]
-    return Database(db_path)
+    return Database(database_url(config))
 
 
 def _event_from_dict(d: dict) -> Event:

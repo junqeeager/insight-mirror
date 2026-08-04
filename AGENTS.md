@@ -57,4 +57,5 @@ docker compose up app                  # run the app in Docker
 - Secrets live in `.env` (gitignored); `config.yaml` references them as `${VAR}` and never stores real values.
 - `APP_PASSWORD` in `.env` gates the public Streamlit dashboard (`frontend/auth.py`); the password is compared with `secrets.compare_digest` and is never committed.
 - Enable/disable sources and tune analysis via `config.yaml`; database URL defaults to `sqlite:///./data/profile.db`.
+- `DATABASE_URL` (or `database.url` in `config.yaml`) selects the backend: `sqlite:///...` or `postgresql+psycopg://...`; run `python scripts/migrate_db.py --from-url ... --to-url ...` to copy data across backends.
 - Redact cookies/tokens when showing config in the frontend settings page.

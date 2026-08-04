@@ -8,7 +8,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import streamlit as st
-from core.database import Database
+from core.database import Database, database_url
 from core.utils import load_config
 from frontend.auth import require_auth
 from frontend.data_access import get_events, get_stats
@@ -25,10 +25,7 @@ require_auth()
 @st.cache_resource
 def get_database():
     config = load_config()
-    db_path = config.get("database", {}).get("url", "sqlite:///./data/profile.db")
-    if db_path.startswith("sqlite:///"):
-        db_path = db_path[len("sqlite:///"):]
-    return Database(db_path)
+    return Database(database_url(config))
 
 db = get_database()
 db.init_tables()

@@ -7,7 +7,7 @@ from pathlib import Path
 # 将项目根目录加入 Python 路径
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core.database import Database
+from core.database import Database, database_url
 from core.plugin_loader import PluginManager
 from core.utils import load_config, setup_logging
 
@@ -27,13 +27,10 @@ def main():
 
     # 2. 初始化数据库
     logger.info("🗄️ 初始化数据库...")
-    db_path = config.get("database", {}).get("url", "sqlite:///./data/profile.db")
-    if db_path.startswith("sqlite:///"):
-        db_path = db_path[len("sqlite:///"):]
-
-    db = Database(db_path)
+    db_url = database_url(config)
+    db = Database(db_url)
     db.init_tables()
-    logger.info("  ✅ 数据库已初始化: %s", db_path)
+    logger.info("  ✅ 数据库已初始化: %s", db_url)
 
     # 3. 加载插件
     logger.info("🔌 加载插件...")

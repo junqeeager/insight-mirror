@@ -94,4 +94,5 @@ api/
 - [x] API 测试：`tests/test_api.py`（TestClient + 临时数据库）
 - [x] 实时响应：`GET /api/v1/graph` 后端预计算（TTL 300s）；`frontend/data_access.py` 增加 TTL 缓存与回退日志；报告页改为后台任务非阻塞轮询；API 启动时预热 jieba
 - [x] 轻量工程化：`core/utils.setup_logging()`、脚本日志化、全局异常处理器、Makefile（test/test-api/run-api/run-web/sync）
-- [ ] 数据规模达到数万条后再评估 `aiosqlite` / PostgreSQL（暂不实施）
+- [x] 数据库双后端：`core/database.py` 改用 SQLAlchemy Core，默认 SQLite，`DATABASE_URL` / `database.url` 可切换 PostgreSQL；新增 `scripts/migrate_db.py` 与 `tests/test_database.py`
+- [ ] 数据量达到数万条后再评估是否需要专用连接池或异步驱动（当前双后端已保留扩展路径）

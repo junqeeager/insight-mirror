@@ -5,7 +5,7 @@ import uuid
 
 from core.database import Database
 from analysis.profile import ProfileGenerator
-from api.deps import get_config, get_db_path
+from api.deps import get_config, get_db_url
 
 TASKS: dict = {}
 TASKS_LOCK = threading.Lock()
@@ -22,7 +22,7 @@ def refresh_profile(period: str = "weekly") -> str:
     def _run():
         profile_id = None
         try:
-            db = Database(get_db_path(config))
+            db = Database(get_db_url(config))
             db.init_tables()
             try:
                 generator = ProfileGenerator(db, config.get("analysis", {}))

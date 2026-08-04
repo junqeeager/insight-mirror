@@ -9,6 +9,7 @@ system:
 
 # 数据库配置
 database:
+  # 默认 SQLite；切换 PostgreSQL 时改为 postgresql+psycopg://user:pass@host:5432/dbname
   url: sqlite:///./data/profile.db
 
 # 数据源配置

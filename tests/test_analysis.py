@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from datetime import datetime, timedelta
 
+from sqlalchemy import text
+
 project_root = str(Path(__file__).parent.parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -92,10 +94,11 @@ def test_profile_generation_persists():
     assert topics, "topics 表不应为空"
     assert any(t.frequency > 0 for t in topics)
 
-    event_topics = db.conn.execute("SELECT COUNT(*) FROM event_topics").fetchone()[0]
-    profiles = db.conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0]
-    assert event_topics > 0, "event_topics 表不应为空"
-    assert profiles == 1
+    with db.engine.connect() as conn:
+        event_topics = conn.execute(text("SELECT COUNT(*) FROM event_topics")).scalar_one()
+        profiles = conn.execute(text("SELECT COUNT(*) FROM profiles")).scalar_one()
+        assert event_topics > 0, "event_topics 表不应为空"
+        assert profiles == 1
     db.close()
 
 

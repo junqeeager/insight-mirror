@@ -86,6 +86,23 @@ streamlit run frontend/app.py
 
 访问 http://localhost:8501 即可使用。
 
+## 🗄️ 数据库配置
+
+默认使用本地 SQLite（`sqlite:///./data/profile.db`）。数据层基于 SQLAlchemy Core，也支持 PostgreSQL：
+
+```yaml
+database:
+  url: postgresql+psycopg://user:pass@localhost:5432/profile
+```
+
+也可用 `DATABASE_URL` 环境变量覆盖 `config.yaml`。切换后端时用迁移脚本幂等拷贝数据：
+
+```bash
+python scripts/migrate_db.py \
+  --from-url sqlite:///./data/profile.db \
+  --to-url postgresql+psycopg://user:pass@localhost:5432/profile
+```
+
 ## 📁 项目结构
 
 ```
@@ -126,7 +143,8 @@ personal-profile/
 ├── scripts/                 # 工具脚本
 │   ├── init_db.py          # 初始化数据库
 │   ├── sync.py             # 数据同步
-│   └── generate_report.py  # 生成报告
+│   ├── generate_report.py  # 生成报告
+│   └── migrate_db.py       # SQLite ↔ PostgreSQL 数据迁移
 │
 ├── api/                     # FastAPI 服务层
 │   ├── main.py             # 应用入口（含 jieba 预热与全局异常处理）
@@ -157,7 +175,7 @@ Streamlit 通过 `frontend/data_access.py` 优先调用 API，API 不可用时�
 ## 🧪 测试与开发命令
 
 ```bash
-make test       # 分析 + 插件 + 前端主题/密码门测试
+make test       # 数据库双后端 + 分析 + 插件 + 前端主题/密码门测试
 make test-api   # API 测试（需在非沙箱环境运行）
 make init-db    # 初始化数据库
 make sync       # 同步所有数据源

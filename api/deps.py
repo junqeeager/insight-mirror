@@ -2,7 +2,7 @@
 
 import os
 
-from core.database import Database
+from core.database import Database, database_url
 from core.utils import load_config
 
 _CONFIG_CACHE: dict = {}
@@ -15,20 +15,17 @@ def get_config() -> dict:
     return _CONFIG_CACHE["config"]
 
 
-def get_db_path(config: dict) -> str:
-    """解析数据库路径，支持 PROFILE_DB_PATH 环境变量覆盖（测试用）"""
-    env_path = os.environ.get("PROFILE_DB_PATH")
-    if env_path:
-        return env_path
-    db_path = config.get("database", {}).get("url", "sqlite:///./data/profile.db")
-    if db_path.startswith("sqlite:///"):
-        db_path = db_path[len("sqlite:///"):]
-    return db_path
+def get_db_url(config: dict) -> str:
+    """解析数据库 URL；PROFILE_DB_PATH 仅保留测试兼容。"""
+    legacy_path = os.environ.get("PROFILE_DB_PATH")
+    if legacy_path:
+        return legacy_path
+    return database_url(config)
 
 
 def get_db():
-    """每个请求独立连接，避免 sqlite 连接跨线程复用"""
-    db = Database(get_db_path(get_config()))
+    """每个请求独立连接池实例，避免跨线程复用同一连接"""
+    db = Database(get_db_url(get_config()))
     db.init_tables()
     try:
         yield db

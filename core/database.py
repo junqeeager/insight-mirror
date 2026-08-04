@@ -1,149 +1,223 @@
-"""数据库管理"""
+"""数据库管理：SQLAlchemy Core 双后端（SQLite / PostgreSQL）"""
 
-import sqlite3
-import json
-from pathlib import Path
+import os
+from dataclasses import asdict
 from datetime import datetime
-from typing import Optional, List
+from pathlib import Path
+from typing import List, Optional
 
-from core.models import Event, EventType, Depth, Profile, Topic
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    create_engine,
+    event,
+    func,
+    select,
+    update,
+)
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import make_url
+from sqlalchemy.pool import StaticPool
+
+from core.models import Depth, Event, EventType, Profile, Topic
+
+metadata = MetaData()
+
+events = Table(
+    "events",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("timestamp", DateTime, nullable=False),
+    Column("source", String, nullable=False),
+    Column("event_type", String, nullable=False),
+    Column("title", Text, nullable=False),
+    Column("url", Text),
+    Column("description", Text),
+    Column("tags", JSON),
+    Column("duration", Integer),
+    Column("progress", Float),
+    Column("depth", String),
+    Column("metadata", JSON),
+    Column("processed", Boolean, default=False),
+    Column("created_at", DateTime, default=datetime.now),
+    Index("idx_events_timestamp", "timestamp"),
+    Index("idx_events_source", "source"),
+    Index("idx_events_type", "event_type"),
+    Index("idx_events_processed", "processed"),
+)
+
+topics = Table(
+    "topics",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("name", String, nullable=False),
+    Column("category", String, nullable=False),
+    Column("frequency", Integer, default=0),
+    Column("weight", Float, default=0.0),
+    Column("first_seen", DateTime),
+    Column("last_seen", DateTime),
+    Column("related_topics", JSON),
+    Index("idx_topics_category", "category"),
+)
+
+event_topics = Table(
+    "event_topics",
+    metadata,
+    Column("event_id", String, ForeignKey("events.id"), primary_key=True),
+    Column("topic_id", String, ForeignKey("topics.id"), primary_key=True),
+    Column("relevance", Float, default=1.0),
+    Index("idx_event_topics_topic", "topic_id"),
+)
+
+profiles = Table(
+    "profiles",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("timestamp", DateTime, nullable=False),
+    Column("period", String, nullable=False),
+    Column("data", JSON, nullable=False),
+    Column("created_at", DateTime, default=datetime.now),
+    Index("idx_profiles_period", "period", "timestamp"),
+)
+
+sync_state = Table(
+    "sync_state",
+    metadata,
+    Column("source", String, primary_key=True),
+    Column("last_sync", DateTime),
+    Column("last_event_id", String),
+    Column("total_synced", Integer, default=0),
+    Column("config", JSON),
+)
+
+
+def normalize_database_url(value: str) -> str:
+    """把裸路径 / :memory: / SQLAlchemy URL 统一为可用的数据库 URL。"""
+    if "://" in value:
+        return value
+    if value == ":memory:":
+        return "sqlite:///:memory:"
+    return f"sqlite:///{value}"
+
+
+def dialect_insert(table: Table, dialect_name: str):
+    """返回支持 ON CONFLICT 的方言化 insert 构造。"""
+    if dialect_name == "sqlite":
+        return sqlite_insert(table)
+    return postgresql_insert(table)
+
+
+def database_url(config: dict) -> str:
+    """解析数据库 URL：优先 DATABASE_URL 环境变量，其次 config.database.url。"""
+    return (
+        os.environ.get("DATABASE_URL")
+        or config.get("database", {}).get("url", "sqlite:///./data/profile.db")
+    )
+
+
+def _json_compatible(value):
+    """把 dataclass 递归转为 JSON 可序列化结构（datetime 转 ISO 字符串）。"""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_compatible(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_compatible(item) for item in value]
+    return value
 
 
 class Database:
-    """SQLite 数据库管理"""
+    """数据库管理：SQLite 与 PostgreSQL 双后端，方法签名保持向后兼容。"""
 
-    def __init__(self, db_path: str = "./data/profile.db"):
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path))
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
+    def __init__(self, db_url: str = "sqlite:///./data/profile.db"):
+        self.db_url = normalize_database_url(db_url)
+        self.dialect = make_url(self.db_url).get_backend_name()
+
+        if self.dialect == "sqlite":
+            db_path = make_url(self.db_url).database
+            if db_path not in (None, "", ":memory:"):
+                Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+            if self.db_url == "sqlite:///:memory:":
+                self.engine = create_engine(
+                    self.db_url,
+                    poolclass=StaticPool,
+                    connect_args={"check_same_thread": False},
+                )
+            else:
+                self.engine = create_engine(
+                    self.db_url,
+                    connect_args={"timeout": 30},
+                )
+                self._enable_sqlite_pragmas()
+        else:
+            self.engine = create_engine(self.db_url, pool_pre_ping=True)
+
+    def _enable_sqlite_pragmas(self) -> None:
+        """SQLite 文件库启用 WAL 与 busy_timeout，提升并发与响应。"""
+
+        @event.listens_for(self.engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.close()
 
     def init_tables(self):
-        """初始化数据库表"""
-        self.conn.executescript("""
-            CREATE TABLE IF NOT EXISTS events (
-                id TEXT PRIMARY KEY,
-                timestamp DATETIME NOT NULL,
-                source TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                title TEXT NOT NULL,
-                url TEXT,
-                description TEXT,
-                tags TEXT,
-                duration INTEGER,
-                progress REAL,
-                depth TEXT,
-                metadata TEXT,
-                processed BOOLEAN DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
+        """初始化数据库表与索引（幂等）。"""
+        metadata.create_all(self.engine)
 
-            CREATE TABLE IF NOT EXISTS topics (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                category TEXT NOT NULL,
-                frequency INTEGER DEFAULT 0,
-                weight REAL DEFAULT 0.0,
-                first_seen DATETIME,
-                last_seen DATETIME,
-                related_topics TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS event_topics (
-                event_id TEXT REFERENCES events(id),
-                topic_id TEXT REFERENCES topics(id),
-                relevance REAL DEFAULT 1.0,
-                PRIMARY KEY (event_id, topic_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS profiles (
-                id TEXT PRIMARY KEY,
-                timestamp DATETIME NOT NULL,
-                period TEXT NOT NULL,
-                data TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS sync_state (
-                source TEXT PRIMARY KEY,
-                last_sync DATETIME,
-                last_event_id TEXT,
-                total_synced INTEGER DEFAULT 0,
-                config TEXT
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_events_source ON events(source);
-            CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
-            CREATE INDEX IF NOT EXISTS idx_events_processed ON events(processed);
-            CREATE INDEX IF NOT EXISTS idx_topics_category ON topics(category);
-            CREATE INDEX IF NOT EXISTS idx_event_topics_topic ON event_topics(topic_id);
-            CREATE INDEX IF NOT EXISTS idx_profiles_period ON profiles(period, timestamp);
-        """)
-        self.conn.commit()
+    @staticmethod
+    def _event_row(event: Event) -> dict:
+        return {
+            "id": event.id,
+            "timestamp": event.timestamp,
+            "source": event.source,
+            "event_type": event.event_type.value,
+            "title": event.title,
+            "url": event.url,
+            "description": event.description,
+            "tags": event.tags,
+            "duration": event.duration,
+            "progress": event.progress,
+            "depth": event.depth.value,
+            "metadata": event.metadata,
+            "processed": bool(event.processed),
+        }
 
     def insert_event(self, event: Event) -> bool:
-        """插入单条事件"""
-        try:
-            self.conn.execute(
-                """INSERT OR IGNORE INTO events
-                   (id, timestamp, source, event_type, title, url,
-                    description, tags, duration, progress, depth, metadata, processed)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    event.id,
-                    event.timestamp.isoformat(),
-                    event.source,
-                    event.event_type.value,
-                    event.title,
-                    event.url,
-                    event.description,
-                    json.dumps(event.tags, ensure_ascii=False),
-                    event.duration,
-                    event.progress,
-                    event.depth.value,
-                    json.dumps(event.metadata, ensure_ascii=False),
-                    event.processed,
-                ),
-            )
-            self.conn.commit()
-            return True
-        except sqlite3.IntegrityError:
-            return False
-
-    def insert_events(self, events: List[Event]) -> int:
-        """批量插入事件，返回实际插入数量（单事务）"""
-        if not events:
-            return 0
-        before = self.conn.total_changes
-        rows = [
-            (
-                event.id,
-                event.timestamp.isoformat(),
-                event.source,
-                event.event_type.value,
-                event.title,
-                event.url,
-                event.description,
-                json.dumps(event.tags, ensure_ascii=False),
-                event.duration,
-                event.progress,
-                event.depth.value,
-                json.dumps(event.metadata, ensure_ascii=False),
-                int(event.processed),
-            )
-            for event in events
-        ]
-        self.conn.executemany(
-            """INSERT OR IGNORE INTO events
-               (id, timestamp, source, event_type, title, url,
-                description, tags, duration, progress, depth, metadata, processed)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            rows,
+        """插入单条事件；主键冲突时忽略并返回 False。"""
+        stmt = (
+            dialect_insert(events, self.dialect)
+            .on_conflict_do_nothing()
+            .returning(events.c.id)
         )
-        self.conn.commit()
-        return self.conn.total_changes - before
+        with self.engine.begin() as conn:
+            row = conn.execute(stmt, self._event_row(event)).first()
+        return row is not None
+
+    def insert_events(self, events_: List[Event]) -> int:
+        """批量插入事件，返回实际插入数量（单事务）。"""
+        if not events_:
+            return 0
+        stmt = dialect_insert(events, self.dialect).on_conflict_do_nothing()
+        rows = [self._event_row(event) for event in events_]
+        with self.engine.begin() as conn:
+            before = conn.execute(select(func.count()).select_from(events)).scalar_one()
+            conn.execute(stmt, rows)
+            after = conn.execute(select(func.count()).select_from(events)).scalar_one()
+        return after - before
 
     def get_events(
         self,
@@ -152,234 +226,255 @@ class Database:
         since: Optional[datetime] = None,
         limit: int = 1000,
     ) -> List[Event]:
-        """查询事件"""
-        query = "SELECT * FROM events WHERE 1=1"
-        params = []
-
+        """查询事件，按时间倒序。"""
+        stmt = select(events).order_by(events.c.timestamp.desc()).limit(limit)
         if source:
-            query += " AND source = ?"
-            params.append(source)
+            stmt = stmt.where(events.c.source == source)
         if event_type:
-            query += " AND event_type = ?"
-            params.append(event_type)
+            stmt = stmt.where(events.c.event_type == event_type)
         if since:
-            query += " AND timestamp >= ?"
-            params.append(since.isoformat())
-
-        query += " ORDER BY timestamp DESC LIMIT ?"
-        params.append(limit)
-
-        rows = self.conn.execute(query, params).fetchall()
+            stmt = stmt.where(events.c.timestamp >= since)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt).mappings().all()
         return [self._row_to_event(row) for row in rows]
 
     def get_unprocessed_events(self, limit: int = 500) -> List[Event]:
-        """获取未处理的事件"""
-        rows = self.conn.execute(
-            "SELECT * FROM events WHERE processed = 0 ORDER BY timestamp LIMIT ?",
-            (limit,),
-        ).fetchall()
+        """获取未处理的事件。"""
+        stmt = (
+            select(events)
+            .where(events.c.processed.is_(False))
+            .order_by(events.c.timestamp)
+            .limit(limit)
+        )
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt).mappings().all()
         return [self._row_to_event(row) for row in rows]
 
     def mark_processed(self, event_ids: List[str]):
-        """标记事件为已处理"""
+        """标记事件为已处理。"""
         if not event_ids:
             return
-        placeholders = ",".join("?" for _ in event_ids)
-        self.conn.execute(
-            f"UPDATE events SET processed = 1 WHERE id IN ({placeholders})",
-            event_ids,
+        stmt = (
+            update(events)
+            .where(events.c.id.in_(event_ids))
+            .values(processed=True)
         )
-        self.conn.commit()
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
 
     def get_last_sync(self, source: str) -> Optional[datetime]:
-        """获取数据源最后同步时间"""
-        row = self.conn.execute(
-            "SELECT last_sync FROM sync_state WHERE source = ?", (source,)
-        ).fetchone()
+        """获取数据源最后同步时间。"""
+        stmt = select(sync_state.c.last_sync).where(sync_state.c.source == source)
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt).mappings().first()
         if row and row["last_sync"]:
-            return datetime.fromisoformat(row["last_sync"])
+            return row["last_sync"]
         return None
 
     def update_sync_state(
         self, source: str, last_event_id: Optional[str] = None, count: int = 0
     ):
-        """更新同步状态"""
-        now = datetime.now().isoformat()
-        self.conn.execute(
-            """INSERT INTO sync_state (source, last_sync, last_event_id, total_synced)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(source) DO UPDATE SET
-                 last_sync = excluded.last_sync,
-                 last_event_id = COALESCE(excluded.last_event_id, sync_state.last_event_id),
-                 total_synced = sync_state.total_synced + excluded.total_synced""",
-            (source, now, last_event_id, count),
+        """更新同步状态（upsert，保留 last_event_id 并累加 total_synced）。"""
+        stmt = dialect_insert(sync_state, self.dialect).values(
+            source=source,
+            last_sync=datetime.now(),
+            last_event_id=last_event_id,
+            total_synced=count,
         )
-        self.conn.commit()
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[sync_state.c.source],
+            set_={
+                "last_sync": stmt.excluded.last_sync,
+                "last_event_id": func.coalesce(
+                    stmt.excluded.last_event_id, sync_state.c.last_event_id
+                ),
+                "total_synced": sync_state.c.total_synced + stmt.excluded.total_synced,
+            },
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
 
     def insert_topic(self, topic: Topic):
-        """插入主题"""
-        self.conn.execute(
-            """INSERT OR REPLACE INTO topics
-               (id, name, category, frequency, weight, first_seen, last_seen, related_topics)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                topic.id,
-                topic.name,
-                topic.category,
-                topic.frequency,
-                topic.weight,
-                topic.first_seen.isoformat() if topic.first_seen else None,
-                topic.last_seen.isoformat() if topic.last_seen else None,
-                json.dumps(topic.related_topics),
-            ),
+        """插入或整体更新主题。"""
+        stmt = dialect_insert(topics, self.dialect).values(
+            id=topic.id,
+            name=topic.name,
+            category=topic.category,
+            frequency=topic.frequency,
+            weight=topic.weight,
+            first_seen=topic.first_seen,
+            last_seen=topic.last_seen,
+            related_topics=topic.related_topics,
         )
-        self.conn.commit()
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[topics.c.id],
+            set_={
+                "name": stmt.excluded.name,
+                "category": stmt.excluded.category,
+                "frequency": stmt.excluded.frequency,
+                "weight": stmt.excluded.weight,
+                "first_seen": stmt.excluded.first_seen,
+                "last_seen": stmt.excluded.last_seen,
+                "related_topics": stmt.excluded.related_topics,
+            },
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
 
     def link_event_topic(self, event_id: str, topic_id: str, relevance: float = 1.0):
-        """建立事件与主题的关联"""
-        self.conn.execute(
-            """INSERT OR REPLACE INTO event_topics (event_id, topic_id, relevance)
-               VALUES (?, ?, ?)""",
-            (event_id, topic_id, relevance),
+        """建立事件与主题的关联（存在则更新 relevance）。"""
+        stmt = dialect_insert(event_topics, self.dialect).values(
+            event_id=event_id,
+            topic_id=topic_id,
+            relevance=relevance,
         )
-        self.conn.commit()
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[event_topics.c.event_id, event_topics.c.topic_id],
+            set_={"relevance": stmt.excluded.relevance},
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
 
     def insert_profile(self, profile: Profile):
-        """保存画像快照"""
-        from dataclasses import asdict
-        self.conn.execute(
-            """INSERT OR REPLACE INTO profiles
-               (id, timestamp, period, data, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (
-                profile.id,
-                profile.timestamp.isoformat(),
-                profile.period,
-                json.dumps(asdict(profile), default=str, ensure_ascii=False),
-                datetime.now().isoformat(),
-            ),
+        """保存画像快照（存在则整体覆盖）。"""
+        stmt = dialect_insert(profiles, self.dialect).values(
+            id=profile.id,
+            timestamp=profile.timestamp,
+            period=profile.period,
+            data=_json_compatible(asdict(profile)),
+            created_at=datetime.now(),
         )
-        self.conn.commit()
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[profiles.c.id],
+            set_={
+                "timestamp": stmt.excluded.timestamp,
+                "period": stmt.excluded.period,
+                "data": stmt.excluded.data,
+                "created_at": stmt.excluded.created_at,
+            },
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
 
     def get_profiles(self, period: Optional[str] = None, limit: int = 10) -> List[Profile]:
-        """查询画像快照"""
-        query = "SELECT * FROM profiles WHERE 1=1"
-        params = []
+        """查询画像快照。"""
+        stmt = select(profiles).order_by(profiles.c.timestamp.desc()).limit(limit)
         if period:
-            query += " AND period = ?"
-            params.append(period)
-        query += " ORDER BY timestamp DESC LIMIT ?"
-        params.append(limit)
+            stmt = stmt.where(profiles.c.period == period)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt).mappings().all()
 
-        rows = self.conn.execute(query, params).fetchall()
-        profiles = []
+        profiles_out = []
         for row in rows:
-            data = json.loads(row["data"])
-            from core.models import Topic
-            topics = [
+            data = row["data"]
+            topics_out = [
                 Topic(
                     id=t.get("id", ""),
                     name=t.get("name", ""),
                     category=t.get("category", ""),
                     frequency=t.get("frequency", 0),
                     weight=t.get("weight", 0.0),
-                    first_seen=datetime.fromisoformat(t["first_seen"]) if t.get("first_seen") else None,
-                    last_seen=datetime.fromisoformat(t["last_seen"]) if t.get("last_seen") else None,
+                    first_seen=datetime.fromisoformat(t["first_seen"])
+                    if t.get("first_seen")
+                    else None,
+                    last_seen=datetime.fromisoformat(t["last_seen"])
+                    if t.get("last_seen")
+                    else None,
                     related_topics=t.get("related_topics", []),
                     events=t.get("events", []),
                 )
                 for t in data.get("top_topics", [])
             ]
-            profiles.append(Profile(
-                id=row["id"],
-                timestamp=datetime.fromisoformat(row["timestamp"]),
-                period=row["period"],
-                top_topics=topics,
-                topic_clusters=data.get("topic_clusters", {}),
-                total_events=data.get("total_events", 0),
-                total_duration=data.get("total_duration", 0),
-                active_days=data.get("active_days", 0),
-                source_distribution=data.get("source_distribution", {}),
-                emerging_topics=data.get("emerging_topics", []),
-                declining_topics=data.get("declining_topics", []),
-                insights=data.get("insights", []),
-                event_ids=data.get("event_ids", []),
-            ))
-        return profiles
+            profiles_out.append(
+                Profile(
+                    id=row["id"],
+                    timestamp=row["timestamp"],
+                    period=row["period"],
+                    top_topics=topics_out,
+                    topic_clusters=data.get("topic_clusters", {}),
+                    total_events=data.get("total_events", 0),
+                    total_duration=data.get("total_duration", 0),
+                    active_days=data.get("active_days", 0),
+                    source_distribution=data.get("source_distribution", {}),
+                    emerging_topics=data.get("emerging_topics", []),
+                    declining_topics=data.get("declining_topics", []),
+                    insights=data.get("insights", []),
+                    event_ids=data.get("event_ids", []),
+                )
+            )
+        return profiles_out
 
     def get_topics(self, category: Optional[str] = None, limit: int = 50) -> List[Topic]:
-        """查询主题"""
-        query = "SELECT * FROM topics WHERE 1=1"
-        params = []
+        """查询主题，按频率倒序。"""
+        stmt = select(topics).order_by(topics.c.frequency.desc()).limit(limit)
         if category:
-            query += " AND category = ?"
-            params.append(category)
-        query += " ORDER BY frequency DESC LIMIT ?"
-        params.append(limit)
-
-        rows = self.conn.execute(query, params).fetchall()
+            stmt = stmt.where(topics.c.category == category)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt).mappings().all()
         return [self._row_to_topic(row) for row in rows]
 
     def get_event_count(self, source: Optional[str] = None) -> int:
-        """获取事件总数"""
+        """获取事件总数。"""
+        stmt = select(func.count()).select_from(events)
         if source:
-            row = self.conn.execute(
-                "SELECT COUNT(*) as cnt FROM events WHERE source = ?", (source,)
-            ).fetchone()
-        else:
-            row = self.conn.execute("SELECT COUNT(*) as cnt FROM events").fetchone()
-        return row["cnt"]
+            stmt = stmt.where(events.c.source == source)
+        with self.engine.connect() as conn:
+            return conn.execute(stmt).scalar_one()
 
     def get_stats(self) -> dict:
-        """获取整体统计"""
-        total = self.get_event_count()
-        by_source = {}
-        for row in self.conn.execute(
-            "SELECT source, COUNT(*) as cnt FROM events GROUP BY source"
-        ):
-            by_source[row["source"]] = row["cnt"]
-
-        by_type = {}
-        for row in self.conn.execute(
-            "SELECT event_type, COUNT(*) as cnt FROM events GROUP BY event_type"
-        ):
-            by_type[row["event_type"]] = row["cnt"]
-
+        """获取整体统计。"""
+        with self.engine.connect() as conn:
+            total = conn.execute(select(func.count()).select_from(events)).scalar_one()
+            by_source = dict(
+                conn.execute(
+                    select(events.c.source, func.count()).group_by(events.c.source)
+                ).all()
+            )
+            by_type = dict(
+                conn.execute(
+                    select(events.c.event_type, func.count()).group_by(events.c.event_type)
+                ).all()
+            )
         return {"total": total, "by_source": by_source, "by_type": by_type}
 
-    def _row_to_event(self, row) -> Event:
-        """将数据库行转为 Event 对象"""
+    @staticmethod
+    def _row_to_event(row) -> Event:
+        """将数据库行转为 Event 对象。"""
         return Event(
             id=row["id"],
-            timestamp=datetime.fromisoformat(row["timestamp"]),
+            timestamp=row["timestamp"],
             source=row["source"],
             event_type=EventType(row["event_type"]),
             title=row["title"],
             url=row["url"],
             description=row["description"],
-            tags=json.loads(row["tags"]) if row["tags"] else [],
+            tags=list(row["tags"]) if row["tags"] else [],
             duration=row["duration"],
             progress=row["progress"],
             depth=Depth(row["depth"]) if row["depth"] else Depth.BROWSE,
-            metadata=json.loads(row["metadata"]) if row["metadata"] else {},
+            metadata=dict(row["metadata"]) if row["metadata"] else {},
             processed=bool(row["processed"]),
         )
 
-    def _row_to_topic(self, row) -> Topic:
-        """将数据库行转为 Topic 对象"""
+    @staticmethod
+    def _row_to_topic(row) -> Topic:
+        """将数据库行转为 Topic 对象。"""
         return Topic(
             id=row["id"],
             name=row["name"],
             category=row["category"],
             frequency=row["frequency"],
             weight=row["weight"],
-            first_seen=datetime.fromisoformat(row["first_seen"]) if row["first_seen"] else None,
-            last_seen=datetime.fromisoformat(row["last_seen"]) if row["last_seen"] else None,
-            related_topics=json.loads(row["related_topics"]) if row["related_topics"] else [],
+            first_seen=row["first_seen"],
+            last_seen=row["last_seen"],
+            related_topics=list(row["related_topics"])
+            if row["related_topics"]
+            else [],
         )
 
     def close(self):
-        self.conn.close()
+        """释放连接池。"""
+        self.engine.dispose()
 
     def __enter__(self):
         return self
