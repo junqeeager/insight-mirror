@@ -35,6 +35,7 @@ docker compose up app                  # run the app in Docker
 ## Testing Guidelines
 
 - Run tests directly: `python tests/test_basic.py` and `python tests/test_models.py`.
+- `tests/test_analysis.py`, `tests/test_plugins.py`, `tests/test_api.py` are pytest-compatible; run `python tests/test_api.py` outside sandboxed shells (asyncio threadpools are blocked inside them).
 - Name test files `test_*.py` and functions `test_*()`.
 - Tests must be offline: use in-memory databases and sample data, never real cookies or live APIs.
 
