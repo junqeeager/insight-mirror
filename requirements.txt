@@ -23,6 +23,7 @@ weasyprint>=60.0
 # 工具
 pyyaml>=6.0.0
 python-dotenv>=1.0.0
+feedparser>=6.0.10
 
 # API（第二阶段）
 fastapi>=0.110.0

@@ -18,7 +18,13 @@ _PASSWORD = "test-pass-123"
 
 def _patch_data_access():
     """替换数据访问层，避免测试触达真实数据库或网络。"""
+    import core.utils as cu
+    import frontend.auth as auth
     import frontend.data_access as da
+
+    # 本地 .env 不应影响“未配置 APP_PASSWORD”的场景
+    cu.load_dotenv = lambda *args, **kwargs: None
+    auth._load_env = lambda: None
 
     def fake_stats(config):
         return {

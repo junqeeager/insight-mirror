@@ -49,6 +49,10 @@ sources:
     enabled: false
     plugin: rss
     config:
+      # 示例：
+      # feeds:
+      #   - url: "https://example.com/rss.xml"
+      #     category: "科技"
       feeds: []
     sync:
       interval: daily
