@@ -18,12 +18,15 @@ import os
 
 from core.utils import load_config
 from frontend.data_access import get_events, get_graph
+from frontend.layout import page_header, render_sidebar
+from frontend.theme import apply_theme
 
 st.set_page_config(page_title="关系视图", page_icon="🕸️", layout="wide")
 
 config = load_config()
-
-st.title("🕸️ 关系视图")
+apply_theme()
+render_sidebar(config)
+page_header("关系视图", "查看兴趣关键词之间的关联与平台分布")
 
 # 时间范围选择
 period = st.selectbox("时间范围", ["最近 7 天", "最近 30 天", "最近 90 天"])
@@ -43,7 +46,7 @@ if not events:
     st.stop()
 
 # 兴趣关联网络（图谱由后端预计算，前端只做阈值过滤）
-st.subheader("🔗 兴趣关联网络")
+st.subheader("兴趣关联网络")
 
 window_days = {"最近 7 天": 7, "最近 30 天": 30, "最近 90 天": 90}[period]
 graph_data = get_graph(config, window_days=window_days)
@@ -72,7 +75,7 @@ for edge in graph_edges:
 
 # 使用 pyvis 可视化
 if G.nodes():
-    net = Network(height="600px", width="100%", bgcolor="#ffffff", font_color="#333")
+    net = Network(height="600px", width="100%", bgcolor="#f1f1f1", font_color="#171717")
     net.from_nx(G)
 
     # 设置节点大小
@@ -89,15 +92,16 @@ if G.nodes():
         temp_path = f.name
 
     # 嵌入 Streamlit
-    with open(temp_path, "r") as f:
-        html_content = f.read()
-    st.html(html_content)
+    with st.container(border=True):
+        with open(temp_path, "r") as f:
+            html_content = f.read()
+        st.html(html_content)
     os.unlink(temp_path)
 else:
     st.info("数据不足以生成关联网络，请增加数据量或调整筛选条件。")
 
 # 平台分布雷达图
-st.subheader("📡 平台分布雷达图")
+st.subheader("平台分布雷达图")
 
 source_counts = Counter(e.source for e in events)
 if source_counts:
@@ -119,7 +123,7 @@ if source_counts:
     st.plotly_chart(fig, width="stretch")
 
 # 标签云
-st.subheader("☁️ 标签云")
+st.subheader("标签云")
 
 all_tags = []
 for event in events:

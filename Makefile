@@ -3,6 +3,7 @@ PYTHON ?= python3
 .PHONY: test test-api run-api run-web sync init-db
 
 test:
+	$(PYTHON) tests/test_frontend_theme.py
 	$(PYTHON) tests/test_analysis.py
 	$(PYTHON) tests/test_plugins.py
 

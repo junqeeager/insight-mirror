@@ -8,9 +8,12 @@ project_root = str(Path(__file__).parent.parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+import pandas as pd
 import streamlit as st
 from core.utils import load_config
 from frontend.data_access import get_events, get_stats
+from frontend.layout import page_header, render_sidebar
+from frontend.theme import apply_theme
 
 # 页面配置
 st.set_page_config(
@@ -22,23 +25,10 @@ st.set_page_config(
 
 config = load_config()
 stats = get_stats(config)
+apply_theme()
+render_sidebar(config, stats)
 
-# 侧边栏
-with st.sidebar:
-    st.title("🧠 个人认知画像")
-    st.markdown("---")
-
-    # 数据库统计
-    st.metric("总事件数", stats["total"])
-    st.markdown("---")
-
-    # 数据源状态
-    st.subheader("数据源状态")
-    for source, count in stats.get("by_source", {}).items():
-        st.text(f"📦 {source}: {count} 条")
-
-# 主页面
-st.title("🏠 个人认知画像 Dashboard")
+page_header("个人认知画像", "基于行为数据生成的兴趣画像与数据看板")
 
 # 概览卡片
 col1, col2, col3, col4 = st.columns(4)
@@ -52,35 +42,36 @@ with col3:
 with col4:
     st.metric("创作记录", by_type.get("create", 0))
 
-st.markdown("---")
-
 # 最近事件
-st.subheader("📋 最近事件")
+st.subheader("最近事件")
 recent_events = get_events(config, limit=20)
 if recent_events:
-    for event in recent_events:
-        with st.expander(f"{event.source} | {event.title[:50]}..."):
-            st.write(f"**时间:** {event.timestamp.strftime('%Y-%m-%d %H:%M')}")
-            st.write(f"**类型:** {event.event_type.value}")
-            st.write(f"**深度:** {event.depth.value}")
-            if event.url:
-                st.write(f"**链接:** [{event.url}]({event.url})")
-            if event.tags:
-                st.write(f"**标签:** {', '.join(event.tags)}")
+    df = pd.DataFrame(
+        [
+            {
+                "时间": e.timestamp.strftime("%Y-%m-%d %H:%M"),
+                "来源": e.source,
+                "类型": e.event_type.value,
+                "标题": e.title[:60],
+                "链接": e.url or "",
+            }
+            for e in recent_events
+        ]
+    )
+    st.dataframe(df, width="stretch", hide_index=True)
 else:
     st.info("暂无数据，请先同步数据源。")
 
 # 快捷操作
-st.markdown("---")
-st.subheader("⚡ 快捷操作")
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    if st.button("🔄 同步 B站数据", width="stretch"):
-        st.info("请运行: python scripts/sync.py --source bilibili")
-with col2:
-    if st.button("📊 生成周报", width="stretch"):
-        st.info("请运行: python scripts/generate_report.py --period weekly")
-with col3:
-    if st.button("📈 查看画像", width="stretch"):
-        st.info("请访问侧边栏的画像页面")
+with st.container(border=True):
+    st.subheader("快捷操作")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("同步 B 站数据", width="stretch"):
+            st.info("请运行: python scripts/sync.py --source bilibili")
+    with col2:
+        if st.button("生成周报", width="stretch"):
+            st.info("请运行: python scripts/generate_report.py --period weekly")
+    with col3:
+        if st.button("查看画像", width="stretch"):
+            st.info("请访问侧边栏的画像页面")

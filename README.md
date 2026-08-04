@@ -84,6 +84,9 @@ personal-profile/
 │
 ├── frontend/                # Streamlit 前端
 │   ├── app.py              # 主入口
+│   ├── theme.py            # Astryx 主题注入（纯 CSS）
+│   ├── layout.py           # 共享侧边栏与页头
+│   ├── assets/             # Astryx neutral 预编译 CSS（固定版本）
 │   └── pages/              # 页面
 │
 └── scripts/                 # 工具脚本

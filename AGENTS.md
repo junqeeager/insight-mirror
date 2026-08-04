@@ -8,7 +8,7 @@ Personal cognitive-profile system that collects behavior data (Bilibili, browser
 - `plugins/<source>/plugin.py` — data source plugins (must subclass `DataSourcePlugin`)
 - `analysis/` — keyword extraction, topic clustering, trends, insights
 - `report/` — report generator and HTML templates
-- `frontend/` — Streamlit app entry (`app.py`) and pages under `frontend/pages/`
+- `frontend/` — Streamlit app entry (`app.py`), shared layout (`layout.py`), Astryx theme injection (`theme.py`), and pages under `frontend/pages/`; vendored Astryx CSS lives in `frontend/assets/astryx/`
 - `scripts/` — CLI tools: `init_db.py`, `sync.py`, `generate_report.py`
 - `tests/` — plain-script tests (no pytest dependency)
 - `data/` — runtime SQLite database and generated reports (gitignored)
@@ -39,6 +39,7 @@ docker compose up app                  # run the app in Docker
 - Run tests directly: `python tests/test_basic.py` and `python tests/test_models.py`.
 - `tests/test_analysis.py`, `tests/test_plugins.py`, `tests/test_api.py` are pytest-compatible; run `python tests/test_api.py` outside sandboxed shells (asyncio threadpools are blocked inside them).
 - `tests/test_graph.py` covers the precomputed interest graph used by `GET /api/v1/graph`.
+- `tests/test_frontend_theme.py` covers the Astryx theme assets and Streamlit selector mapping.
 - Name test files `test_*.py` and functions `test_*()`.
 - Tests must be offline: use in-memory databases and sample data, never real cookies or live APIs.
 

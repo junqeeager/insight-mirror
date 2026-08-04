@@ -15,12 +15,15 @@ from datetime import datetime, timedelta
 
 from core.utils import load_config
 from frontend.data_access import get_events
+from frontend.layout import page_header, render_sidebar
+from frontend.theme import apply_theme
 
 st.set_page_config(page_title="时间视图", page_icon="📈", layout="wide")
 
 config = load_config()
-
-st.title("📈 时间视图")
+apply_theme()
+render_sidebar(config)
+page_header("时间视图", "按时间范围观察事件分布与活跃时段")
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -130,17 +133,17 @@ df, fig_heatmap, fig_timeline, fig_source, fig_type = build_time_view(
     data_key,
 )
 
-st.subheader("🔥 活跃时段热力图")
+st.subheader("活跃时段热力图")
 st.plotly_chart(fig_heatmap, width="stretch")
 
 # 事件时间线
-st.subheader("📅 事件时间线")
+st.subheader("事件时间线")
 st.plotly_chart(fig_timeline, width="stretch")
 
 # 来源分布
-st.subheader("📊 来源分布")
+st.subheader("来源分布")
 st.plotly_chart(fig_source, width="stretch")
 
 # 事件类型分布
-st.subheader("📈 事件类型分布")
+st.subheader("事件类型分布")
 st.plotly_chart(fig_type, width="stretch")

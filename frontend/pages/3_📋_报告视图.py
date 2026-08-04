@@ -21,12 +21,15 @@ from frontend.data_access import (
     get_task_status,
     start_profile_refresh,
 )
+from frontend.layout import page_header, render_sidebar
+from frontend.theme import apply_theme
 
 st.set_page_config(page_title="报告视图", page_icon="📋", layout="wide")
 
 config = load_config()
-
-st.title("📋 报告视图")
+apply_theme()
+render_sidebar(config)
+page_header("报告视图", "查看最近画像快照并生成完整 HTML 报告")
 
 
 def _finish_report(profile, period: str):
@@ -39,13 +42,13 @@ def _finish_report(profile, period: str):
 
 
 # 生成报告
-st.subheader("📊 生成新报告")
+st.subheader("生成新报告")
 
 col1, col2 = st.columns(2)
 with col1:
     period = st.selectbox("报告周期", ["weekly", "monthly", "yearly"])
 with col2:
-    if st.button("🚀 生成报告", width="stretch"):
+    if st.button("生成报告", width="stretch"):
         task_id = start_profile_refresh(config, period=period)
         if task_id:
             # 后台任务模式：立即返回，页面轮询状态
@@ -94,7 +97,7 @@ if "latest_profile" in st.session_state:
     report_path = st.session_state.get("latest_report_path", "")
 
     st.markdown("---")
-    st.subheader(f"📄 {profile.period.upper()} 报告")
+    st.subheader(f"{profile.period.upper()} 报告")
 
     # 概览
     col1, col2, col3 = st.columns(3)
@@ -108,13 +111,13 @@ if "latest_profile" in st.session_state:
 
     # Top 主题
     if profile.top_topics:
-        st.subheader("🏆 Top 兴趣领域")
+        st.subheader("Top 兴趣领域")
         for i, topic in enumerate(profile.top_topics[:10], 1):
             st.write(f"{i}. **{topic.name}** (权重: {topic.weight:.3f})")
 
     # 来源分布
     if profile.source_distribution:
-        st.subheader("📡 来源分布")
+        st.subheader("来源分布")
         for source, count in sorted(
             profile.source_distribution.items(), key=lambda x: x[1], reverse=True
         ):
@@ -122,34 +125,34 @@ if "latest_profile" in st.session_state:
 
     # 趋势
     if profile.emerging_topics:
-        st.subheader("📈 新兴兴趣")
+        st.subheader("新兴兴趣")
         cols = st.columns(min(len(profile.emerging_topics), 5))
         for i, topic in enumerate(profile.emerging_topics[:5]):
             cols[i].markdown(f"🟢 {topic}")
 
     if profile.declining_topics:
-        st.subheader("📉 衰退兴趣")
+        st.subheader("衰退兴趣")
         cols = st.columns(min(len(profile.declining_topics), 5))
         for i, topic in enumerate(profile.declining_topics[:5]):
             cols[i].markdown(f"🔴 {topic}")
 
     # 洞察
     if profile.insights:
-        st.subheader("💡 个人洞察")
+        st.subheader("个人洞察")
         for insight in profile.insights:
             st.info(insight)
 
     # 查看完整报告
     if report_path and Path(report_path).exists():
         st.markdown("---")
-        st.subheader("🔗 完整报告")
+        st.subheader("完整报告")
         with open(report_path, "r") as f:
             html_content = f.read()
         st.html(html_content)
 
 # 历史报告列表
 st.markdown("---")
-st.subheader("📚 历史报告")
+st.subheader("历史报告")
 
 reports_dir = Path("./data/reports")
 if reports_dir.exists():
