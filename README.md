@@ -1,6 +1,11 @@
-# 🧠 个人认知画像系统
+# 🧠 个人认知画像系统 · Personal Cognitive Profile
 
-通过长期行为数据（观看、阅读、搜索、收藏、创作、项目记录），构建一个动态变化的个人认知画像。
+> 基于长期行为数据（B站、浏览器历史、GitHub、RSS）构建动态个人认知画像，并提供可视化看板与定期报告。
+> A personal cognitive-profile system that turns long-term behavioral data into an evolving interest profile with a Streamlit dashboard.
+
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
+![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)
 
 ## ✨ 功能特性
 
@@ -11,6 +16,31 @@
 - 💡 **智能洞察** - 自动生成个人行为洞察
 - 📋 **报告生成** - 周报/月报/年报
 
+## 📸 Screenshots
+
+截图待补充，目录与命名约定见 [docs/screenshots/README.md](docs/screenshots/README.md)。
+正式部署后将补充首页、时间视图、关系视图、报告视图四张截图，避免 README 中出现失效图片链接。
+
+## 🏗️ 架构
+
+```
+plugins/（B站 / 浏览器历史 / GitHub / RSS）
+        │ scripts/sync.py 采集写入
+        ▼
+SQLite（data/profile.db）
+        ▲                    ▲
+        │ 直连回退             │ 查询
+frontend/（Streamlit）  ──▶  api/（FastAPI，仅监听本机 :8502）
+        │
+        ▼
+analysis/（关键词提取 / 主题聚类 / 趋势 / 洞察）
+        │
+        ▼
+report/（HTML 周报 / 月报 / 年报）
+```
+
+Streamlit 前端优先调用 FastAPI（带 TTL 缓存），API 不可用时自动回退直连 SQLite，保证低流量个人项目的实时响应。
+
 ## 🚀 快速开始
 
 ### 1. 安装依赖
@@ -19,7 +49,7 @@
 pip install -r requirements.txt
 ```
 
-### 2. 配置数据源
+### 2. 配置数据源与访问密码
 
 复制 `.env.example` 为 `.env` 并填入配置：
 
@@ -27,7 +57,10 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-编辑 `.env` 文件，填入你的 B站 Cookie 等信息。
+编辑 `.env` 文件：
+
+- 填入你的 B站 Cookie、GitHub Token 等凭据；
+- 设置 `APP_PASSWORD` 作为公开看板的访问密码（不设置时看板会拒绝访问并提示）。
 
 ### 3. 初始化数据库
 
@@ -84,16 +117,16 @@ personal-profile/
 │
 ├── frontend/                # Streamlit 前端
 │   ├── app.py              # 主入口
+│   ├── auth.py             # 公开看板密码门
 │   ├── theme.py            # Astryx 主题注入（纯 CSS）
 │   ├── layout.py           # 共享侧边栏与页头
 │   ├── assets/             # Astryx neutral 预编译 CSS（固定版本）
 │   └── pages/              # 页面
 │
-└── scripts/                 # 工具脚本
-    ├── init_db.py          # 初始化数据库
-    ├── sync.py             # 数据同步
-    └── generate_report.py  # 生成报告
-
+├── scripts/                 # 工具脚本
+│   ├── init_db.py          # 初始化数据库
+│   ├── sync.py             # 数据同步
+│   └── generate_report.py  # 生成报告
 │
 ├── api/                     # FastAPI 服务层
 │   ├── main.py             # 应用入口（含 jieba 预热与全局异常处理）
@@ -108,27 +141,35 @@ personal-profile/
 make run-api   # 等价于 uvicorn api.main:app --host 0.0.0.0 --port 8502
 ```
 
-| 端点 | 说明 |
-| --- | --- |
-| `GET /health` | 存活检查 |
-| `GET /api/v1/events` | 事件查询（source/event_type/since/limit） |
-| `GET /api/v1/topics` | 主题查询 |
-| `GET /api/v1/stats` | 数据库统计 |
-| `GET /api/v1/profile/latest` | 最近画像快照 |
-| `POST /api/v1/profile/refresh` | 后台重建画像 |
-| `GET /api/v1/graph` | 兴趣共现图（后端预计算，5 分钟缓存） |
+| 方法 | 端点 | 说明 |
+| --- | --- | --- |
+| `GET` | `/health` | 存活检查 |
+| `GET` | `/api/v1/events` | 事件查询（source/event_type/since/limit） |
+| `GET` | `/api/v1/topics` | 主题查询 |
+| `GET` | `/api/v1/stats` | 数据库统计 |
+| `GET` | `/api/v1/profile/latest` | 最近画像快照 |
+| `POST` | `/api/v1/profile/refresh` | 后台重建画像 |
+| `GET` | `/api/v1/profile/refresh/{task_id}` | 查询画像重建任务状态 |
+| `GET` | `/api/v1/graph` | 兴趣共现图（后端预计算，5 分钟缓存） |
 
-Streamlit 通过 `frontend/data_access.py` 优先调用 API，API 不可用时自动回退直连 SQLite；数据结果带 TTL 缓存（30s/60s/300s），保证低流量个人项目的实时响应。
+Streamlit 通过 `frontend/data_access.py` 优先调用 API，API 不可用时自动回退直连 SQLite；数据结果带 TTL 缓存（30s/60s/300s）。
 
 ## 🧪 测试与开发命令
 
 ```bash
-make test       # 分析 + 插件测试
+make test       # 分析 + 插件 + 前端主题/密码门测试
 make test-api   # API 测试（需在非沙箱环境运行）
 make init-db    # 初始化数据库
 make sync       # 同步所有数据源
 make run-web    # 启动 Streamlit
 ```
+
+## 🔒 隐私与安全
+
+- 所有 Cookie / Token 仅保存在本地 `.env`（已被 `.gitignore` 排除），`config.yaml` 只通过 `${VAR}` 引用，仓库中不包含任何真实凭据。
+- 公开 Streamlit 看板带简单密码门（`frontend/auth.py`）：密码来自 `.env` 的 `APP_PASSWORD`，使用 `secrets.compare_digest` 校验；未配置密码时页面会阻塞并提示，未登录前不会渲染任何个人数据。
+- 设置页展示配置时自动脱敏 Cookie / Token / Secret。
+- FastAPI 服务默认仅监听本机（:8502），Cloudflare 隧道只转发 Streamlit 端口（:8501），不会把 API 直接暴露到公网。
 
 ## 🔌 添加新数据源
 
@@ -183,4 +224,4 @@ docker-compose --profile scheduler up
 
 ## 📄 License
 
-MIT
+[MIT](LICENSE) © 2026 [junqeeager](https://github.com/junqeeager)
