@@ -188,6 +188,7 @@ make run-web    # 启动 Streamlit
 - 公开 Streamlit 看板带简单密码门（`frontend/auth.py`）：密码来自 `.env` 的 `APP_PASSWORD`，使用 `secrets.compare_digest` 校验；未配置密码时页面会阻塞并提示，未登录前不会渲染任何个人数据。
 - 设置页展示配置时自动脱敏 Cookie / Token / Secret。
 - FastAPI 服务默认仅监听本机（:8502），Cloudflare 隧道只转发 Streamlit 端口（:8501），不会把 API 直接暴露到公网。
+- 仓库公开且每次 commit 会自动推送到 GitHub：`deploy/pre-push` 钩子（由 `setup.sh` 安装）会在推送前运行 `scripts/check_secrets.py`，检测到 B 站 Cookie、GitHub Token、`APP_PASSWORD` 字面值、私钥、带密码的数据库 URL 等真实凭据时阻止推送。
 
 ## 🔌 添加新数据源
 

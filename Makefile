@@ -8,6 +8,7 @@ test:
 	$(PYTHON) tests/test_database.py
 	$(PYTHON) tests/test_analysis.py
 	$(PYTHON) tests/test_plugins.py
+	$(PYTHON) tests/test_secret_guard.py
 
 test-api:
 	$(PYTHON) tests/test_api.py

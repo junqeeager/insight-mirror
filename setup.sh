@@ -40,6 +40,25 @@ python3 -m playwright install chromium 2>/dev/null || echo "  ⚠️ 浏览器�
 echo ""
 echo "✅ 依赖安装完成！"
 echo ""
+
+# 安装 Git 推送密钥扫描钩子（防止真实凭据被推送到公开仓库）
+echo "🔒 安装 pre-push 密钥扫描钩子..."
+HOOKS_DIR=""
+if [ -d .git-data/hooks ]; then
+    HOOKS_DIR=".git-data/hooks"
+elif [ -d .git/hooks ]; then
+    HOOKS_DIR=".git/hooks"
+fi
+
+if [ -n "$HOOKS_DIR" ] && [ -f deploy/pre-push ]; then
+    cp deploy/pre-push "$HOOKS_DIR/pre-push"
+    chmod +x "$HOOKS_DIR/pre-push"
+    echo "  ✅ 已安装到 $HOOKS_DIR/pre-push"
+else
+    echo "  ⚠️ 未找到 Git hooks 目录，跳过钩子安装"
+fi
+
+echo ""
 echo "下一步:"
 echo "  1. 获取 B站 Cookie:"
 echo "     python3 scripts/get_bilibili_cookie.py"
