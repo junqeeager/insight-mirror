@@ -3,9 +3,21 @@
 > 基于长期行为数据（B站、浏览器历史、GitHub、RSS）构建动态个人认知画像，并提供可视化看板与定期报告。
 > A personal cognitive-profile system that turns long-term behavioral data into an evolving interest profile with a React SPA + FastAPI dashboard.
 
-![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-API-blue.svg)
 ![React](https://img.shields.io/badge/React-18+-blue.svg)
+![TypeScript](https://img.shields.io/badge/TypeScript-5+-blue.svg)
+![SQLite/PostgreSQL](https://img.shields.io/badge/SQLite%2FPostgreSQL-database-green.svg)
+![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
+
+## ✅ 环境要求
+
+- Python 3.11+
+- Node.js 20.19+（或 22.12+）与 npm 10+
+- 可选：Docker / docker compose、systemd 用户服务（长期部署）
+
+项目默认使用 SQLite，无需额外数据库；切换 PostgreSQL 的方式见下文「数据库配置」。
 
 ## ✨ 功能特性
 
@@ -17,6 +29,8 @@
 - 📋 **报告生成** - 周报/月报/年报
 
 ## 📸 Screenshots
+
+线上预览：<https://t.506ikun.space>（公开预览，登录后可查看自己的真实画像）
 
 截图待补充，目录与命名约定见 [docs/screenshots/README.md](docs/screenshots/README.md)。
 正式部署后将补充首页、时间视图、关系视图、报告视图四张截图，避免 README 中出现失效图片链接。
@@ -47,6 +61,8 @@ React SPA 未登录时可浏览全站示例数据预览；登录后通过 FastAP
 
 ```bash
 pip install -r requirements.txt
+npm --prefix web install
+npm --prefix web run build   # 构建 React SPA，产出 web/dist
 ```
 
 ### 2. 配置数据源与账号
@@ -96,11 +112,24 @@ cd web && npm install && npm run dev
 
 访问 http://localhost:8501 即可使用。
 
-部署前构建 SPA：
+## 💻 本地开发
 
 ```bash
-npm --prefix web install
-npm --prefix web run build   # 产出 web/dist，由 FastAPI 同源托管
+# 终端 1：启动 API（:8502）
+make run-api
+
+# 终端 2：启动 Vite 开发服务器（:5173，/api 自动代理到 :8502）
+make run-web-dev
+```
+
+开发模式下访问 http://localhost:5173；生产/本机预览使用 `make run-web`（:8501）。
+
+常用前端命令：
+
+```bash
+npm --prefix web run dev     # Vite 开发服务器
+npm --prefix web run test    # Vitest 测试
+npm --prefix web run build   # 生产构建
 ```
 
 ## 🗄️ 数据库配置
@@ -295,6 +324,32 @@ journalctl --user -u personal-profile-web.service -f
 4. 刷新页面，找到 Request Headers 中的 Cookie
 5. 复制 `SESSDATA=xxx` 和 `bili_jct=xxx`
 
+## ❓ 常见问题
+
+**启动时提示 `address already in use`**
+
+8501/8502 端口可能已被旧进程占用：
+
+```bash
+pgrep -af "streamlit run|uvicorn api.main"
+# 确认后停止旧服务，或使用 systemctl --user restart personal-profile-web.service
+```
+
+**登录后接口返回 401**
+
+会话 token 30 天有效；过期后页面会自动弹出登录弹窗，重新登录即可。浏览器中的本地登录状态可通过“退出登录”清除。
+
+**修改前端代码后页面没有更新**
+
+开发模式请使用 `make run-web-dev`（Vite 热更新）；生产模式需要重新执行 `npm --prefix web run build`，FastAPI 会直接托管新的 `web/dist`。
+
+## 🤝 贡献
+
+- 保持代码风格：Python 遵循 PEP 8，中文注释；前端 TypeScript 严格模式。
+- 提交信息使用 Conventional Commits，如 `feat:`、`fix:`、`docs:`、`refactor:`。
+- 新增功能请补充对应测试：Python 测试放在 `tests/`，前端测试放在 `web/src/test/`。
+- 提交前会触发 `deploy/pre-push` 密钥扫描，禁止提交真实 Cookie / Token / `.env`。
+
 ## 📄 License
 
-[MIT](LICENSE) © 2026 [junqeeager](https://github.com/junqeeager)
+本项目使用 [MIT License](LICENSE)。© 2026 [junqeeager](https://github.com/junqeeager)。
