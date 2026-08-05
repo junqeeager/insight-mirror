@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from core.database import Database
 from api.deps import get_current_user, get_db
 from api.schemas import ProfileOut, RefreshTaskOut, TaskStatusOut
-from api.tasks import get_task_for_user, refresh_profile
+from api.tasks import TaskConflictError, get_task_for_user, refresh_profile
 
 router = APIRouter(prefix="/api/v1/profile", tags=["profile"])
 
@@ -32,7 +32,10 @@ def refresh(
     user: dict = Depends(get_current_user),
 ):
     """触发后台重建画像（基于已同步数据）"""
-    task_id = refresh_profile(period=period, user_id=user["id"])
+    try:
+        task_id = refresh_profile(period=period, user_id=user["id"])
+    except TaskConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return RefreshTaskOut(task_id=task_id, message="画像重建任务已启动")
 
 
@@ -45,4 +48,9 @@ def task_status(
     task = get_task_for_user(task_id, user["id"])
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return TaskStatusOut(task_id=task_id, **task)
+    return TaskStatusOut(
+        task_id=task_id,
+        status=task["status"],
+        error=task.get("error"),
+        profile_id=(task.get("result") or {}).get("profile_id"),
+    )

@@ -1,6 +1,7 @@
 """FastAPI 依赖"""
 
 import os
+import threading
 
 from fastapi import Depends, Header, HTTPException
 
@@ -9,6 +10,8 @@ from core.database import Database, database_url
 from core.utils import load_config
 
 _CONFIG_CACHE: dict = {}
+_INITIALIZED_URLS: set = set()
+_INIT_LOCK = threading.Lock()
 
 
 def get_config() -> dict:
@@ -26,10 +29,18 @@ def get_db_url(config: dict) -> str:
     return database_url(config)
 
 
+def ensure_initialized(db: Database) -> None:
+    """确保建表只执行一次（进程内按 URL 去重）。"""
+    with _INIT_LOCK:
+        if db.db_url not in _INITIALIZED_URLS:
+            db.init_tables()
+            _INITIALIZED_URLS.add(db.db_url)
+
+
 def get_db():
-    """每个请求独立连接池实例，避免跨线程复用同一连接"""
+    """每个请求使用共享 engine 的连接，建表只执行一次。"""
     db = Database(get_db_url(get_config()))
-    db.init_tables()
+    ensure_initialized(db)
     try:
         yield db
     finally:

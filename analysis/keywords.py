@@ -1,6 +1,7 @@
 """关键词提取"""
 
 from collections import Counter
+from functools import lru_cache
 from typing import List, Tuple
 
 try:
@@ -97,6 +98,7 @@ def extract_keywords_from_events(events: list, top_n: int = 20) -> List[Tuple[st
     return extract_keywords(texts, top_n)
 
 
+@lru_cache(maxsize=2048)
 def segment_text(text: str) -> List[str]:
     """中文分词"""
     words = jieba.cut(text)

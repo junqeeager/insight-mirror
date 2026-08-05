@@ -53,7 +53,7 @@ class ProfileGenerator:
         keywords = extract_keywords_from_events(events, top_n=20)
         top_topics = [
             Topic(
-                id=f"topic-{word}",
+                id=f"topic-general-{word}",
                 name=word,
                 category="general",
                 weight=weight,
@@ -158,7 +158,7 @@ class ProfileGenerator:
             base_weight = info.get("count", 0) / total
             for kw in keywords:
                 topic = Topic(
-                    id=f"topic-{kw}",
+                    id=f"topic-cluster-{cluster_id}-{kw}",
                     name=kw,
                     category=cluster_id,
                     weight=base_weight,

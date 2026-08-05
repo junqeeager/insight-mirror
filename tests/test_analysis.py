@@ -97,6 +97,13 @@ def test_profile_generation_persists():
     topics = db.get_topics(uid, limit=100)
     assert topics, "topics 表不应为空"
     assert any(t.frequency > 0 for t in topics)
+    assert all(
+        t.id.startswith("topic-general-") or t.id.startswith("topic-cluster-")
+        for t in topics
+    )
+    general_ids = {t.id for t in topics if t.category == "general"}
+    cluster_ids = {t.id for t in topics if t.category.startswith("cluster_")}
+    assert not (general_ids & cluster_ids), "general 与 cluster 主题 ID 不应冲突"
 
     with db.engine.connect() as conn:
         event_topics = conn.execute(text("SELECT COUNT(*) FROM event_topics")).scalar_one()

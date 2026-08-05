@@ -1,7 +1,7 @@
 """兴趣图谱构建（分词 → 词频 → 事件内 top5 共现）"""
 
 from collections import Counter
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from analysis.keywords import segment_text
 
@@ -10,6 +10,7 @@ def build_interest_graph(
     events: list,
     min_freq: int = 1,
     min_co: int = 1,
+    max_nodes: Optional[int] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """从事件列表构建兴趣共现图。
 
@@ -45,6 +46,8 @@ def build_interest_graph(
         for word, freq in keyword_freq.items()
         if freq >= min_freq
     ]
+    if max_nodes and len(nodes) > max_nodes:
+        nodes = sorted(nodes, key=lambda n: n["freq"], reverse=True)[:max_nodes]
     node_ids = {n["id"] for n in nodes}
     edges = [
         {"source": s, "target": t, "weight": count}

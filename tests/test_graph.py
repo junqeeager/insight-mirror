@@ -48,6 +48,18 @@ def test_filter_thresholds():
     assert all(e["weight"] >= 2 for e in graph["edges"])
 
 
+def test_max_nodes_prunes_graph():
+    events = [
+        _event(i, f"主题{i} 通用词 热门词", tags=["编程"])
+        for i in range(10)
+    ]
+    graph = build_interest_graph(events, max_nodes=3)
+    assert len(graph["nodes"]) == 3
+    for edge in graph["edges"]:
+        assert edge["source"] in {n["id"] for n in graph["nodes"]}
+        assert edge["target"] in {n["id"] for n in graph["nodes"]}
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -3,7 +3,7 @@
 import os
 import uuid
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
@@ -12,6 +12,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    delete,
     Float,
     ForeignKey,
     Index,
@@ -34,6 +35,8 @@ from sqlalchemy.pool import StaticPool
 from core.models import Depth, Event, EventType, Profile, Topic
 
 metadata = MetaData()
+
+_ENGINE_CACHE: dict = {}
 
 events = Table(
     "events",
@@ -142,6 +145,28 @@ source_configs = Table(
     Column("enabled", Boolean, default=True),
 )
 
+tasks = Table(
+    "tasks",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("user_id", String, nullable=False),
+    Column("kind", String, nullable=False),
+    Column("status", String, nullable=False, default="running"),
+    Column("params", JSON),
+    Column("result", JSON),
+    Column("error", Text),
+    Column("created_at", DateTime, default=datetime.now),
+    Column("finished_at", DateTime),
+    Index("idx_tasks_user", "user_id", "kind", "status"),
+)
+
+schema_migrations = Table(
+    "schema_migrations",
+    metadata,
+    Column("version", String, primary_key=True),
+    Column("applied_at", DateTime, default=datetime.now),
+)
+
 
 def normalize_database_url(value: str) -> str:
     """把裸路径 / :memory: / SQLAlchemy URL 统一为可用的数据库 URL。"""
@@ -184,30 +209,38 @@ class Database:
     def __init__(self, db_url: str = "sqlite:///./data/profile.db"):
         self.db_url = normalize_database_url(db_url)
         self.dialect = make_url(self.db_url).get_backend_name()
+        self._owns_engine = False
 
         if self.dialect == "sqlite":
             db_path = make_url(self.db_url).database
-            if db_path not in (None, "", ":memory:"):
-                Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-            if self.db_url == "sqlite:///:memory:":
+            if db_path == ":memory:":
                 self.engine = create_engine(
                     self.db_url,
                     poolclass=StaticPool,
                     connect_args={"check_same_thread": False},
                 )
+                self._owns_engine = True
             else:
-                self.engine = create_engine(
-                    self.db_url,
-                    connect_args={"timeout": 30},
-                )
-                self._enable_sqlite_pragmas()
+                if self.db_url not in _ENGINE_CACHE:
+                    Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+                    engine = create_engine(
+                        self.db_url,
+                        connect_args={"timeout": 30},
+                    )
+                    self._enable_sqlite_pragmas(engine)
+                    _ENGINE_CACHE[self.db_url] = engine
+                self.engine = _ENGINE_CACHE[self.db_url]
         else:
-            self.engine = create_engine(self.db_url, pool_pre_ping=True)
+            if self.db_url not in _ENGINE_CACHE:
+                _ENGINE_CACHE[self.db_url] = create_engine(
+                    self.db_url, pool_pre_ping=True
+                )
+            self.engine = _ENGINE_CACHE[self.db_url]
 
-    def _enable_sqlite_pragmas(self) -> None:
+    def _enable_sqlite_pragmas(self, engine) -> None:
         """SQLite 文件库启用 WAL 与 busy_timeout，提升并发与响应。"""
 
-        @event.listens_for(self.engine, "connect")
+        @event.listens_for(engine, "connect")
         def _set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
@@ -279,6 +312,17 @@ class Database:
             stmt = stmt.where(events.c.event_type == event_type)
         if since:
             stmt = stmt.where(events.c.timestamp >= since)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt).mappings().all()
+        return [self._row_to_event(row) for row in rows]
+
+    def get_all_events(self, user_id: str) -> List[Event]:
+        """查询当前用户全部事件，按时间倒序（用于导出）。"""
+        stmt = (
+            select(events)
+            .where(events.c.user_id == user_id)
+            .order_by(events.c.timestamp.desc())
+        )
         with self.engine.connect() as conn:
             rows = conn.execute(stmt).mappings().all()
         return [self._row_to_event(row) for row in rows]
@@ -627,9 +671,108 @@ class Database:
 
     def delete_session(self, token_hash: str) -> None:
         """删除会话（登出/失效）。"""
-        from sqlalchemy import delete
-
         stmt = delete(sessions).where(sessions.c.token_hash == token_hash)
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    def delete_expired_sessions(self) -> int:
+        """清理所有过期会话，返回删除条数。"""
+        stmt = delete(sessions).where(sessions.c.expires_at <= datetime.now())
+        with self.engine.begin() as conn:
+            result = conn.execute(stmt)
+        return result.rowcount or 0
+
+    def delete_user_sessions(self, user_id: str) -> None:
+        """删除某用户的全部会话（改密/注销时使用）。"""
+        stmt = delete(sessions).where(sessions.c.user_id == user_id)
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    def delete_user_data(self, user_id: str) -> None:
+        """物理删除某用户全部数据与账号（不可恢复）。"""
+        with self.engine.begin() as conn:
+            for table in (
+                event_topics,
+                events,
+                topics,
+                profiles,
+                sync_state,
+                source_configs,
+                sessions,
+            ):
+                conn.execute(delete(table).where(table.c.user_id == user_id))
+            conn.execute(delete(users).where(users.c.id == user_id))
+
+    # ---------- 后台任务 ----------
+
+    def create_task(
+        self,
+        task_id: str,
+        user_id: str,
+        kind: str,
+        params: Optional[dict] = None,
+    ) -> None:
+        """创建后台任务记录。"""
+        with self.engine.begin() as conn:
+            conn.execute(
+                tasks.insert().values(
+                    id=task_id,
+                    user_id=user_id,
+                    kind=kind,
+                    status="running",
+                    params=params or {},
+                    created_at=datetime.now(),
+                )
+            )
+
+    def update_task(
+        self,
+        task_id: str,
+        status: Optional[str] = None,
+        result: Optional[dict] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """更新后台任务状态与结果。"""
+        values = {"finished_at": datetime.now()}
+        if status is not None:
+            values["status"] = status
+        if result is not None:
+            values["result"] = result
+        if error is not None:
+            values["error"] = error
+        stmt = update(tasks).where(tasks.c.id == task_id).values(**values)
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    def get_task(self, task_id: str) -> Optional[dict]:
+        """查询任务记录。"""
+        stmt = select(tasks).where(tasks.c.id == task_id)
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt).mappings().first()
+        return dict(row) if row else None
+
+    def get_running_task(self, user_id: str, kind: str) -> Optional[dict]:
+        """查询某用户某类型正在运行的任务。"""
+        stmt = (
+            select(tasks)
+            .where(
+                tasks.c.user_id == user_id,
+                tasks.c.kind == kind,
+                tasks.c.status == "running",
+            )
+            .order_by(tasks.c.created_at.desc())
+            .limit(1)
+        )
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt).mappings().first()
+        return dict(row) if row else None
+
+    def cleanup_tasks(self, keep_days: int = 7) -> None:
+        """清理指定天数前已结束的任务记录。"""
+        cutoff = datetime.now() - timedelta(days=keep_days)
+        stmt = delete(tasks).where(
+            tasks.c.status != "running", tasks.c.created_at < cutoff
+        )
         with self.engine.begin() as conn:
             conn.execute(stmt)
 
@@ -717,8 +860,9 @@ class Database:
         )
 
     def close(self):
-        """释放连接池。"""
-        self.engine.dispose()
+        """归还连接；仅对自有 engine（内存库）执行销毁。"""
+        if self._owns_engine:
+            self.engine.dispose()
 
     def __enter__(self):
         return self

@@ -56,6 +56,8 @@ def test_init_tables_creates_all_tables():
             "users",
             "sessions",
             "source_configs",
+            "tasks",
+            "schema_migrations",
         } <= names
     finally:
         db.close()
@@ -311,6 +313,64 @@ def test_live_postgres_roundtrip():
         db.link_event_topic(event.id, topic.id, uid, relevance=1.0)
     finally:
         metadata.drop_all(db.engine)
+        db.close()
+
+
+def test_task_crud_running_conflict_and_cleanup():
+    db = _mem_db()
+    try:
+        uid = _new_user(db)
+        db.create_task("t-1", uid, "profile_refresh", {"period": "weekly"})
+        row = db.get_task("t-1")
+        assert row["status"] == "running"
+        assert row["kind"] == "profile_refresh"
+        assert db.get_running_task(uid, "profile_refresh")["id"] == "t-1"
+
+        db.update_task("t-1", status="done", result={"profile_id": "p-1"})
+        row = db.get_task("t-1")
+        assert row["status"] == "done"
+        assert row["result"] == {"profile_id": "p-1"}
+        assert db.get_running_task(uid, "profile_refresh") is None
+
+        # 完成 8 天前的任务会被清理，running 任务不清理
+        old_task = "t-old"
+        db.create_task(old_task, uid, "sync", {})
+        db.update_task(old_task, status="done")
+        with db.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE tasks SET created_at = :cutoff "
+                    "WHERE id = :tid"
+                ),
+                {"cutoff": datetime.now() - timedelta(days=8), "tid": old_task},
+            )
+        db.cleanup_tasks(keep_days=7)
+        assert db.get_task(old_task) is None
+        assert db.get_task("t-1") is not None
+    finally:
+        db.close()
+
+
+def test_delete_expired_sessions_and_user_data():
+    db = _mem_db()
+    try:
+        uid = _new_user(db)
+        db.create_session("hash-1", uid, datetime.now() - timedelta(minutes=1))
+        db.create_session("hash-2", uid, datetime.now() + timedelta(days=1))
+        assert db.delete_expired_sessions() >= 1
+        assert db.get_session_user("hash-1") is None
+        assert db.get_session_user("hash-2") is not None
+
+        db.insert_events(
+            [_make_event(i, datetime(2026, 8, 1, 10, 0, i)) for i in range(2)],
+            uid,
+        )
+        db.link_event_topic("ev-0", "t1", uid)
+        db.delete_user_data(uid)
+        assert db.get_user_by_id(uid) is None
+        assert db.get_event_count(uid) == 0
+        assert db.get_session_user("hash-2") is None
+    finally:
         db.close()
 
 

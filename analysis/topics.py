@@ -49,7 +49,7 @@ def cluster_topics(
     # 聚类
     if method == "kmeans":
         n_clusters = min(n_clusters, len(events))
-        model = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        model = KMeans(n_clusters=n_clusters, random_state=42, n_init=5)
         labels = model.fit_predict(tfidf_matrix)
     elif method == "lda":
         n_clusters = min(n_clusters, len(events))
