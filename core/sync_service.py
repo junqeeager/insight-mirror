@@ -1,8 +1,9 @@
 """按用户执行数据源同步（脚本与 API 后台任务共用）。"""
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from core.auth import decrypt_config
 from core.database import Database
@@ -37,8 +38,9 @@ def sync_source(
 
     logger.info("用户 %s 同步数据源: %s", user_id, source_name)
     if not plugin.test_connection():
-        logger.error("数据源 %s 连接失败", source_name)
-        return {"source": source_name, "error": "连接失败"}
+        detail = getattr(plugin, "last_error", "") or "连接失败"
+        logger.error("数据源 %s 连接失败: %s", source_name, detail)
+        return {"source": source_name, "error": detail}
 
     last_sync = db.get_last_sync(user_id, source_name)
     since = (
@@ -64,6 +66,7 @@ def sync_user(
     config: dict,
     user_id: str,
     source: Optional[str] = None,
+    on_source_done: Optional[Callable[[str, dict], None]] = None,
 ) -> dict:
     """同步某个用户的全部（或指定）已启用数据源。"""
     rows = db.list_source_configs(user_id)
@@ -81,11 +84,38 @@ def sync_user(
     plugin_manager = PluginManager(config["system"]["plugins_dir"], user_config)
     plugin_manager.discover()
 
+    enabled = {
+        name: source_cfg
+        for name, source_cfg in sources.items()
+        if source_cfg.get("enabled", False)
+    }
     results = {}
-    for source_name, source_cfg in sources.items():
-        if not source_cfg.get("enabled", False):
-            continue
-        results[source_name] = sync_source(db, plugin_manager, source_name, user_id)
+
+    def _run_one(name: str) -> tuple:
+        return name, sync_source(db, plugin_manager, name, user_id)
+
+    if len(enabled) <= 1:
+        for name in enabled:
+            name, result = _run_one(name)
+            results[name] = result
+            if on_source_done:
+                on_source_done(name, result)
+        return results
+
+    with ThreadPoolExecutor(
+        max_workers=min(4, len(enabled)),
+        thread_name_prefix="sync-source",
+    ) as pool:
+        futures = {pool.submit(_run_one, name): name for name in enabled}
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                _, result = future.result()
+            except Exception as exc:
+                result = {"source": name, "error": str(exc)}
+            results[name] = result
+            if on_source_done:
+                on_source_done(name, result)
     return results
 
 

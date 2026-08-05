@@ -103,6 +103,7 @@ def test_source(
     try:
         plugin = manager.load(source)
         ok = plugin.test_connection()
-        return {"ok": ok, "message": "连接成功" if ok else "连接失败，请检查配置"}
+        detail = getattr(plugin, "last_error", "") or "连接失败，请检查配置"
+        return {"ok": ok, "message": "连接成功" if ok else detail}
     except KeyError:
         raise HTTPException(status_code=404, detail="插件未找到")

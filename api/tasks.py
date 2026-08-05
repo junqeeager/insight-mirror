@@ -83,7 +83,26 @@ def sync_user_task(user_id: str, source: str = None) -> str:
         config = get_config()
         db = _open_db()
         try:
-            return {"results": sync_user(db, config, user_id, source=source)}
+            results: dict = {}
+
+            def on_source_done(source_name: str, result: dict) -> None:
+                results[source_name] = result
+                task_db = _open_db()
+                try:
+                    task_db.update_task_progress(
+                        task_id, {"results": dict(results)}
+                    )
+                finally:
+                    task_db.close()
+
+            sync_user(
+                db,
+                config,
+                user_id,
+                source=source,
+                on_source_done=on_source_done,
+            )
+            return {"results": results}
         finally:
             db.close()
 

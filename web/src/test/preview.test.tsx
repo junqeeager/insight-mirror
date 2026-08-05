@@ -27,6 +27,7 @@ vi.mock("../api/client", async (importOriginal) => {
     fetchSources: vi.fn(),
     fetchAdminUsers: vi.fn(),
     startSync: vi.fn(),
+    fetchSyncStatus: vi.fn(),
     saveSource: vi.fn(),
     testSource: vi.fn(),
     fetchYouTubeAuthUrl: vi.fn(),
@@ -93,6 +94,11 @@ beforeEach(() => {
   vi.mocked(client.startSync).mockResolvedValue({
     task_id: "task-abc",
     status: "started",
+  });
+  vi.mocked(client.fetchSyncStatus).mockResolvedValue({
+    task_id: "task-abc",
+    status: "done",
+    results: { youtube: { source: "youtube", count: 3 } },
   });
   vi.mocked(client.login).mockResolvedValue({
     token: "token-x",
@@ -162,6 +168,36 @@ describe("未登录公开预览", () => {
     renderRoute("/settings?youtube=ok&message=YouTube 已连接，等待同步");
     expect(
       await screen.findByText("YouTube 已连接，等待同步"),
+    ).toBeInTheDocument();
+  });
+
+  it("点击同步此源后轮询并显示卡片内结果", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    renderRoute("/settings");
+    const buttons = await screen.findAllByRole("button", { name: "同步此源" });
+    fireEvent.click(buttons[buttons.length - 1]);
+
+    await waitFor(() =>
+      expect(client.startSync).toHaveBeenCalledWith("youtube"),
+    );
+    await waitFor(() =>
+      expect(client.fetchSyncStatus).toHaveBeenCalledWith("task-abc"),
+    );
+    expect(
+      await screen.findByText("同步完成，新增 3 条"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/task-abc/)).not.toBeInTheDocument();
+  });
+
+  it("YouTube 连接成功回跳后自动同步并显示结果", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    renderRoute("/settings?youtube=ok&message=YouTube 已连接，等待同步");
+
+    await waitFor(() =>
+      expect(client.startSync).toHaveBeenCalledWith("youtube"),
+    );
+    expect(
+      await screen.findByText("同步完成，新增 3 条"),
     ).toBeInTheDocument();
   });
 });

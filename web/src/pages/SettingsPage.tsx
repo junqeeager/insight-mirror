@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   changePassword,
@@ -9,6 +9,7 @@ import {
   fetchSources,
   fetchYouTubeAuthUrl,
   fetchStats,
+  fetchSyncStatus,
   patchAdminUser,
   saveSource,
   startSync,
@@ -33,6 +34,12 @@ interface FieldDef {
   secret?: boolean;
   kind?: "textarea" | "select";
   options?: string[];
+}
+
+interface SyncState {
+  taskId: string;
+  phase: "running" | "done" | "error";
+  message: string;
 }
 
 const FIELDS: Record<string, FieldDef[]> = {
@@ -136,6 +143,8 @@ export function SettingsPage() {
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [deletePassword, setDeletePassword] = useState("");
+  const [syncStates, setSyncStates] = useState<Record<string, SyncState>>({});
+  const syncTimers = useRef<Record<string, number>>({});
 
   useEffect(() => {
     setNotice("");
@@ -200,27 +209,125 @@ export function SettingsPage() {
     }
   }, [isAuthenticated, isAdmin]);
 
+  const applySourceList = useCallback((result: SourceConfig[]) => {
+    setSources(result);
+    const nextValues: Record<string, Record<string, string>> = {};
+    const nextEnabled: Record<string, boolean> = {};
+    for (const item of result) {
+      nextValues[item.source] = sourceToValues(item);
+      nextEnabled[item.source] = item.enabled;
+    }
+    setValues(nextValues);
+    setEnabled(nextEnabled);
+  }, []);
+
+  const refreshStatsAndSources = useCallback(() => {
+    fetchSources().then(applySourceList).catch(() => undefined);
+    fetchStats().then(setStats).catch(() => undefined);
+  }, [applySourceList]);
+
+  const clearSyncState = useCallback((source: string) => {
+    if (syncTimers.current[source]) {
+      window.clearTimeout(syncTimers.current[source]);
+      delete syncTimers.current[source];
+    }
+    setSyncStates((prev) => {
+      if (!prev[source]) return prev;
+      const next = { ...prev };
+      delete next[source];
+      return next;
+    });
+  }, []);
+
+  const pollSync = useCallback(
+    (source: string, taskId: string) => {
+      fetchSyncStatus(taskId)
+        .then((task) => {
+          if (task.status === "running") {
+            setSyncStates((prev) => ({
+              ...prev,
+              [source]: { taskId, phase: "running", message: "正在同步…" },
+            }));
+            syncTimers.current[source] = window.setTimeout(
+              () => pollSync(source, taskId),
+              1500,
+            );
+            return;
+          }
+          const perSource = (task.results ?? {})[source] as
+            | { count?: number; error?: string }
+            | undefined;
+          const err = perSource?.error ?? task.error ?? "";
+          if (task.status === "done" && !err) {
+            const count = perSource?.count ?? 0;
+            setSyncStates((prev) => ({
+              ...prev,
+              [source]: {
+                taskId,
+                phase: "done",
+                message: `同步完成，新增 ${count} 条`,
+              },
+            }));
+            refreshStatsAndSources();
+          } else {
+            setSyncStates((prev) => ({
+              ...prev,
+              [source]: {
+                taskId,
+                phase: "error",
+                message: `同步失败：${err || "未知错误"}`,
+              },
+            }));
+          }
+          syncTimers.current[source] = window.setTimeout(
+            () => clearSyncState(source),
+            30000,
+          );
+        })
+        .catch((err) => {
+          const detail =
+            (err as { response?: { data?: { detail?: string } } })?.response
+              ?.data?.detail ?? "";
+          setSyncStates((prev) => ({
+            ...prev,
+            [source]: {
+              taskId,
+              phase: "error",
+              message: `同步状态查询失败：${detail || "请稍后重试"}`,
+            },
+          }));
+          syncTimers.current[source] = window.setTimeout(
+            () => clearSyncState(source),
+            30000,
+          );
+        });
+    },
+    [refreshStatsAndSources, clearSyncState],
+  );
+
   useEffect(() => {
     const status = searchParams.get("youtube");
     const code = searchParams.get("code");
     const state = searchParams.get("state");
     const clear = () => setSearchParams({}, { replace: true });
-    const applySources = (result: SourceConfig[]) => {
-      setSources(result);
-      const nextValues: Record<string, Record<string, string>> = {};
-      const nextEnabled: Record<string, boolean> = {};
-      for (const item of result) {
-        nextValues[item.source] = sourceToValues(item);
-        nextEnabled[item.source] = item.enabled;
-      }
-      setValues(nextValues);
-      setEnabled(nextEnabled);
-    };
 
     if (status === "ok") {
       setNotice(searchParams.get("message") || "YouTube 已连接");
-      fetchSources().then(applySources).catch(() => undefined);
+      fetchSources().then(applySourceList).catch(() => undefined);
       clear();
+      startSync("youtube")
+        .then((task) => {
+          setSyncStates((prev) => ({
+            ...prev,
+            youtube: {
+              taskId: task.task_id,
+              phase: "running",
+              message: "正在同步…",
+            },
+          }));
+          pollSync("youtube", task.task_id);
+        })
+        .catch(() => undefined);
       return;
     }
     if (status === "error") {
@@ -235,7 +342,7 @@ export function SettingsPage() {
       .then(async (result) => {
         setNotice(result.message);
         const refreshed = await fetchSources();
-        applySources(refreshed);
+        applySourceList(refreshed);
       })
       .catch((err) => {
         setError(
@@ -246,7 +353,15 @@ export function SettingsPage() {
       .finally(() => {
         clear();
       });
-  }, [searchParams, setSearchParams]);
+  }, [searchParams, setSearchParams, applySourceList, pollSync]);
+
+  useEffect(
+    () => () => {
+      Object.values(syncTimers.current).forEach((id) => window.clearTimeout(id));
+      syncTimers.current = {};
+    },
+    [],
+  );
 
   const updateValue = useCallback(
     (source: string, key: string, value: string) => {
@@ -306,13 +421,21 @@ export function SettingsPage() {
     setError("");
     try {
       const task = await startSync(source);
-      setNotice(`${source} 同步任务已启动：${task.task_id.slice(0, 8)}…`);
-      window.setTimeout(() => setNotice(""), 8000);
+      clearSyncState(source);
+      setSyncStates((prev) => ({
+        ...prev,
+        [source]: {
+          taskId: task.task_id,
+          phase: "running",
+          message: "正在同步…",
+        },
+      }));
+      pollSync(source, task.task_id);
     } catch (err) {
-      setError(
-        (err as { response?: { data?: { detail?: string } } })?.response?.data
-          ?.detail ?? "同步启动失败",
-      );
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      const detail = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail;
+      setError(status === 409 ? "已有同类同步任务正在进行，请稍后再试" : detail ?? "同步启动失败");
     }
   }
 
@@ -552,6 +675,22 @@ export function SettingsPage() {
                     同步此源
                   </button>
                 </div>
+                {syncStates[source.source] && (
+                  <div
+                    className={`sync-status ${
+                      syncStates[source.source].phase === "error"
+                        ? "sync-error"
+                        : syncStates[source.source].phase === "done"
+                          ? "sync-done"
+                          : ""
+                    }`}
+                  >
+                    {syncStates[source.source].phase === "running" && (
+                      <span className="spinner" aria-hidden="true" />
+                    )}
+                    <span>{syncStates[source.source].message}</span>
+                  </div>
+                )}
                 {source.source === "youtube" && isAuthenticated && (
                   <div className="youtube-actions">
                     {!enabled[source.source] && (

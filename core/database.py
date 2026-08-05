@@ -837,6 +837,16 @@ class Database:
         with self.engine.begin() as conn:
             conn.execute(stmt)
 
+    def update_task_progress(self, task_id: str, result: dict) -> None:
+        """运行中任务更新部分结果（不改 status / finished_at）。"""
+        stmt = (
+            update(tasks)
+            .where(tasks.c.id == task_id)
+            .values(result=result)
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
     def get_task(self, task_id: str) -> Optional[dict]:
         """查询任务记录。"""
         stmt = select(tasks).where(tasks.c.id == task_id)

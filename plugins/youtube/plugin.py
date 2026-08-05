@@ -52,6 +52,7 @@ class Plugin(DataSourcePlugin):
         self.refresh_token = ""
         self.public_url = ""
         self.takeout_max_mb = 20
+        self.last_error = ""
         self.client: Optional[httpx.Client] = None
 
     def setup(self, config: dict) -> None:
@@ -144,7 +145,9 @@ class Plugin(DataSourcePlugin):
 
     def test_connection(self) -> bool:
         """有 refresh_token 且能刷新并访问本人频道信息时视为连接成功。"""
+        self.last_error = ""
         if not self.refresh_token:
+            self.last_error = "未连接 YouTube（缺少 refresh_token）"
             return False
         try:
             token = self._refresh_access_token()
@@ -153,9 +156,26 @@ class Plugin(DataSourcePlugin):
                 params={"part": "id", "mine": "true", "maxResults": 1},
                 headers=self._headers(token),
             )
-            return resp.status_code == 200
-        except Exception:
+            if resp.status_code == 200:
+                return True
+            self.last_error = self._api_error(resp) or (
+                f"YouTube API 返回 {resp.status_code}"
+            )
             return False
+        except Exception as exc:
+            self.last_error = f"连接失败: {exc}"
+            return False
+
+    @staticmethod
+    def _api_error(resp: httpx.Response) -> str:
+        """从 YouTube API 错误响应里提取简短可读原因。"""
+        try:
+            message = (resp.json().get("error") or {}).get("message", "")
+        except Exception:
+            return ""
+        if not message:
+            return ""
+        return message if len(message) <= 300 else message[:297] + "..."
 
     def fetch(self, since: datetime) -> List[Event]:
         """增量拉取喜欢的视频与新增订阅（自动刷新 access token）。"""
@@ -169,6 +189,7 @@ class Plugin(DataSourcePlugin):
     def get_status(self) -> dict:
         status = super().get_status()
         status["connected"] = bool(self.refresh_token)
+        status["last_error"] = self.last_error
         return status
 
     # ---------- YouTube Data API 拉取 ----------

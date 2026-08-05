@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from api.main import app  # noqa: E402
 import api.routers.youtube as youtube_router  # noqa: E402
+import api.routers.sources as sources_router  # noqa: E402
 from core.auth import hash_password  # noqa: E402
 from core.database import Database  # noqa: E402
 from core.models import Event, EventType  # noqa: E402
@@ -473,6 +474,38 @@ def test_youtube_callback_exchanges_and_redirects():
         assert message == ["用户拒绝"]
     finally:
         youtube_router._plugin_for = original
+
+
+def test_youtube_test_connection_reports_detail():
+    class FakePlugin:
+        last_error = "YouTube Data API 未启用"
+
+        def test_connection(self):
+            return False
+
+    class FakeManager:
+        def __init__(self, plugins_dir, config):
+            self.plugins_dir = plugins_dir
+            self.config = config
+
+        def discover(self):
+            return []
+
+        def load(self, source):
+            return FakePlugin()
+
+    original = sources_router.PluginManager
+    sources_router.PluginManager = FakeManager
+    try:
+        r = client.post(
+            "/api/v1/sources/youtube/test", headers=_auth(_ALICE_TOKEN)
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is False
+        assert body["message"] == "YouTube Data API 未启用"
+    finally:
+        sources_router.PluginManager = original
 
 
 def test_youtube_takeout_import_and_validation():

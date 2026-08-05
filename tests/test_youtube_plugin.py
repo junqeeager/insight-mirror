@@ -164,7 +164,9 @@ def test_fetch_requires_refresh_token():
 
 def test_test_connection():
     assert _attach_mock(_plugin()).test_connection() is True
-    assert _attach_mock(_plugin(refresh_token="")).test_connection() is False
+    plugin = _plugin(refresh_token="")
+    assert _attach_mock(plugin).test_connection() is False
+    assert "refresh_token" in plugin.last_error
 
 
 def test_takeout_parse_and_stable_ids():
