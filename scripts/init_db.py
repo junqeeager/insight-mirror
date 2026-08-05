@@ -29,7 +29,7 @@ def main():
     db.init_tables()
 
     logger.info("✅ 数据库已初始化: %s", db_url)
-    logger.info("📊 当前事件数: %d", db.get_event_count())
+    logger.info("👤 当前用户数: %d", len(db.list_users()))
 
     db.close()
 

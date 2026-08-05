@@ -2,6 +2,9 @@
 
 import os
 
+from fastapi import Depends, Header, HTTPException
+
+from core.auth import hash_token
 from core.database import Database, database_url
 from core.utils import load_config
 
@@ -31,3 +34,24 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def get_current_user(
+    authorization: str = Header(default=""),
+    db: Database = Depends(get_db),
+) -> dict:
+    """从 Bearer token 解析当前登录用户（无效/过期/未启用均拒绝）。"""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="未登录")
+    token_hash = hash_token(authorization[len("Bearer "):].strip())
+    user = db.get_session_user(token_hash)
+    if user is None:
+        raise HTTPException(status_code=401, detail="登录已失效，请重新登录")
+    return user
+
+
+def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    """仅允许 admin 角色访问。"""
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user

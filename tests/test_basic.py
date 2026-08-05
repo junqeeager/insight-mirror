@@ -32,6 +32,9 @@ print("✅ 内存数据库初始化成功！")
 
 # 测试事件创建和插入
 from datetime import datetime
+
+uid = db.create_user("basic-user", "x" * 60, role="user", status="active")
+
 event = Event(
     id="test-1",
     timestamp=datetime(2024, 1, 1, 12, 0, 0),
@@ -39,8 +42,8 @@ event = Event(
     event_type=EventType.VIEW,
     title="测试视频",
 )
-db.insert_event(event)
-assert db.get_event_count() == 1
+db.insert_event(event, uid)
+assert db.get_event_count(uid) == 1
 print("✅ 事件插入成功！")
 
 # 测试关键词提取

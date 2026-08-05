@@ -1,7 +1,7 @@
-"""前端密码门测试（AppTest + 内存假数据，全程离线）"""
+"""前端登录/注册鉴权测试（AppTest + 内存假数据，全程离线）"""
 
-import os
 import sys
+import tempfile
 from pathlib import Path
 
 project_root = str(Path(__file__).parent.parent)
@@ -10,109 +10,151 @@ if project_root not in sys.path:
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-from frontend.auth import _password_configured, _verify_password  # noqa: E402
+from core.database import Database  # noqa: E402
+from frontend.auth import login_user, register_user  # noqa: E402
 
 _APP_PATH = str(Path(project_root) / "frontend" / "app.py")
-_PASSWORD = "test-pass-123"
 
 
-def _patch_data_access():
-    """替换数据访问层，避免测试触达真实数据库或网络。"""
+def _config_with_db(db_path: str) -> dict:
+    return {
+        "database": {"url": f"sqlite:///{db_path}"},
+        "frontend": {"use_api": False, "api_base": "http://localhost:8502"},
+        "system": {"plugins_dir": "plugins"},
+    }
+
+
+def test_register_pending_then_login_after_activation():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = str(Path(tmp) / "auth.db")
+        config = _config_with_db(db_path)
+
+        ok, message = register_user(config, "alice", "alice-pass-123")
+        assert ok
+        assert "审核" in message
+
+        ok, user, token, message = login_user(config, "alice", "alice-pass-123")
+        assert not ok
+        assert "未启用" in message
+
+        db = Database(f"sqlite:///{db_path}")
+        db.init_tables()
+        alice = db.get_user_by_username("alice")
+        db.update_user_status(alice["id"], "active")
+        db.close()
+
+        ok, user, token, message = login_user(config, "alice", "alice-pass-123")
+        assert ok, message
+        assert user["username"] == "alice"
+        assert user["role"] == "user"
+
+
+def test_register_duplicate_username():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = str(Path(tmp) / "auth.db")
+        config = _config_with_db(db_path)
+        assert register_user(config, "bob", "bob-pass-123")[0]
+        ok, message = register_user(config, "bob", "bob-pass-123")
+        assert not ok
+        assert "已存在" in message
+
+
+def _patch_app(fake_login=None):
     import core.utils as cu
     import frontend.auth as auth
     import frontend.data_access as da
+    import frontend.layout as layout
 
-    # 本地 .env 不应影响“未配置 APP_PASSWORD”的场景
-    cu.load_dotenv = lambda *args, **kwargs: None
-    auth._load_env = lambda: None
+    fake_config = {
+        "frontend": {"use_api": False, "api_base": "http://localhost:8502"},
+        "database": {"url": "sqlite:///:memory:"},
+        "system": {"plugins_dir": "plugins"},
+    }
+    cu.load_config = lambda *args, **kwargs: fake_config
+    auth.load_config = lambda *args, **kwargs: fake_config
 
-    def fake_stats(config):
+    def default_login(config, username, password):
+        return (
+            True,
+            {"id": "u1", "username": "alice", "role": "user", "status": "active"},
+            "token-x",
+            None,
+        )
+
+    auth.login_user = fake_login or default_login
+
+    def fake_stats(config, user):
         return {
             "total": 3,
             "by_type": {"view": 3, "read": 0, "create": 0},
             "by_source": {"test": 3},
         }
 
-    def fake_events(config, limit=1000, **kwargs):
+    def fake_events(config, user, limit=1000, **kwargs):
         return []
 
     da.get_stats = fake_stats
     da.get_events = fake_events
+    layout.get_stats = fake_stats
 
 
-def _login(at: AppTest, password: str) -> AppTest:
-    at.text_input[0].set_value(password)
+def _login(at: AppTest, username: str, password: str) -> AppTest:
+    at.text_input[0].set_value(username)
+    at.text_input[1].set_value(password)
     at.button[0].click().run()
     return at
 
 
-def test_verify_password_match_and_configured():
-    os.environ["APP_PASSWORD"] = _PASSWORD
-    try:
-        assert _password_configured()
-        assert _verify_password(_PASSWORD)
-        assert not _verify_password("wrong-password")
-        assert not _verify_password("")
-    finally:
-        os.environ.pop("APP_PASSWORD", None)
-    assert not _password_configured()
-
-
-def test_dashboard_blocks_without_configured_password():
-    os.environ.pop("APP_PASSWORD", None)
-    _patch_data_access()
-
+def test_dashboard_requires_login():
+    _patch_app()
     at = AppTest.from_file(_APP_PATH, default_timeout=20)
     at.run()
 
-    assert any("APP_PASSWORD" in error.value for error in at.error)
-    assert [markdown.value for markdown in at.markdown] == ["### 🔒 需要访问密码"]
+    assert any("登录 / 注册" in markdown.value for markdown in at.markdown)
     assert not at.metric
+    assert at.session_state.filtered_state.get("user") is None
 
 
 def test_dashboard_rejects_wrong_password():
-    os.environ["APP_PASSWORD"] = _PASSWORD
-    _patch_data_access()
+    def bad_login(config, username, password):
+        return False, None, None, "用户名或密码错误"
 
+    _patch_app(fake_login=bad_login)
     at = AppTest.from_file(_APP_PATH, default_timeout=20)
     at.run()
-    _login(at, "wrong-password")
+    _login(at, "alice", "wrong-pass")
 
-    assert any("密码错误" in error.value for error in at.error)
+    assert any("用户名或密码错误" in error.value for error in at.error)
     assert not at.metric
-    assert at.session_state.filtered_state.get("authenticated") is None
+    assert at.session_state.filtered_state.get("user") is None
 
 
-def test_dashboard_accepts_correct_password_and_enters_main_page():
-    os.environ["APP_PASSWORD"] = _PASSWORD
-    _patch_data_access()
-
+def test_dashboard_accepts_login_and_enters_main_page():
+    _patch_app()
     at = AppTest.from_file(_APP_PATH, default_timeout=20)
     at.run()
-    _login(at, _PASSWORD)
+    _login(at, "alice", "alice-pass-123")
 
     assert not at.error
-    assert at.session_state["authenticated"] is True
+    assert at.session_state["user"]["username"] == "alice"
     labels = [metric.label for metric in at.metric]
     assert "总事件数" in labels
     assert any(button.label == "退出登录" for button in at.button)
 
 
-def test_logout_clears_auth_and_returns_to_login():
-    os.environ["APP_PASSWORD"] = _PASSWORD
-    _patch_data_access()
-
+def test_logout_clears_login():
+    _patch_app()
     at = AppTest.from_file(_APP_PATH, default_timeout=20)
     at.run()
-    _login(at, _PASSWORD)
-    assert at.session_state["authenticated"] is True
+    _login(at, "alice", "alice-pass-123")
+    assert at.session_state["user"]["username"] == "alice"
 
     logout = next(button for button in at.button if button.label == "退出登录")
     logout.click().run()
-    at.run()  # 完成 st.rerun() 触发的下一次脚本执行
+    at.run()
 
-    assert at.session_state.filtered_state.get("authenticated") is None
-    assert [markdown.value for markdown in at.markdown] == ["### 🔒 需要访问密码"]
+    assert at.session_state.filtered_state.get("user") is None
+    assert any("登录 / 注册" in markdown.value for markdown in at.markdown)
     assert not at.metric
 
 
@@ -121,4 +163,4 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             print(f"✅ {name}")
-    print("\n🎉 前端密码门测试通过！")
+    print("\n🎉 前端登录鉴权测试通过！")

@@ -39,11 +39,15 @@ def main():
     logger.info("  ✅ 发现插件: %s", discovered)
 
     # 4. 显示统计
-    stats = db.get_stats()
-    logger.info("📊 数据库统计:")
-    logger.info("  总事件数: %d", stats["total"])
-    for source, count in stats.get("by_source", {}).items():
-        logger.info("  - %s: %d 条", source, count)
+    admin = next((u for u in db.list_users() if u["role"] == "admin"), None)
+    if admin:
+        stats = db.get_stats(admin["id"])
+        logger.info("📊 数据库统计（管理员 %s）:", admin["username"])
+        logger.info("  总事件数: %d", stats["total"])
+        for source, count in stats.get("by_source", {}).items():
+            logger.info("  - %s: %d 条", source, count)
+    else:
+        logger.info("⚠️ 暂无用户，请先运行: python scripts/manage_users.py create-admin")
 
     # 5. 显示已启用的数据源
     logger.info("📦 已启用的数据源:")

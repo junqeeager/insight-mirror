@@ -35,6 +35,10 @@ def _mem_db() -> Database:
     return db
 
 
+def _new_user(db: Database, username: str = "user", role: str = "user", status: str = "active") -> str:
+    return db.create_user(username, "x" * 60, role=role, status=status)
+
+
 def test_init_tables_creates_all_tables():
     db = _mem_db()
     try:
@@ -43,7 +47,16 @@ def test_init_tables_creates_all_tables():
                 text("SELECT name FROM sqlite_master WHERE type='table'")
             ).all()
         names = {row[0] for row in rows}
-        assert {"events", "topics", "event_topics", "profiles", "sync_state"} <= names
+        assert {
+            "events",
+            "topics",
+            "event_topics",
+            "profiles",
+            "sync_state",
+            "users",
+            "sessions",
+            "source_configs",
+        } <= names
     finally:
         db.close()
 
@@ -51,12 +64,13 @@ def test_init_tables_creates_all_tables():
 def test_event_roundtrip_and_duplicate_ignore():
     db = _mem_db()
     try:
+        uid = _new_user(db)
         event = _make_event(1, datetime(2026, 8, 1, 10, 0, 0))
-        assert db.insert_event(event) is True
-        assert db.insert_event(event) is False
-        assert db.get_event_count() == 1
+        assert db.insert_event(event, uid) is True
+        assert db.insert_event(event, uid) is False
+        assert db.get_event_count(uid) == 1
 
-        loaded = db.get_events()[0]
+        loaded = db.get_events(uid)[0]
         assert loaded.id == event.id
         assert loaded.source == "test"
         assert loaded.event_type == EventType.VIEW
@@ -71,11 +85,12 @@ def test_event_roundtrip_and_duplicate_ignore():
 def test_insert_events_batch_counts_inserted_only():
     db = _mem_db()
     try:
+        uid = _new_user(db)
         base = datetime(2026, 8, 1, 10, 0, 0)
         events_list = [_make_event(i, base + timedelta(hours=i)) for i in range(3)]
-        assert db.insert_events(events_list) == 3
-        assert db.insert_events([events_list[0]]) == 0
-        assert db.get_event_count() == 3
+        assert db.insert_events(events_list, uid) == 3
+        assert db.insert_events([events_list[0]], uid) == 0
+        assert db.get_event_count(uid) == 3
     finally:
         db.close()
 
@@ -83,21 +98,23 @@ def test_insert_events_batch_counts_inserted_only():
 def test_get_events_filters_and_ordering():
     db = _mem_db()
     try:
+        uid = _new_user(db)
         base = datetime(2026, 8, 1, 10, 0, 0)
         db.insert_events(
             [
                 _make_event(1, base, title="A"),
                 _make_event(2, base + timedelta(hours=1), title="B"),
                 _make_event(3, base + timedelta(hours=2), title="C"),
-            ]
+            ],
+            uid,
         )
-        rows = db.get_events(limit=2)
+        rows = db.get_events(uid, limit=2)
         assert [e.title for e in rows] == ["C", "B"]
-        rows = db.get_events(source="missing")
+        rows = db.get_events(uid, source="missing")
         assert rows == []
-        rows = db.get_events(since=base + timedelta(hours=1))
+        rows = db.get_events(uid, since=base + timedelta(hours=1))
         assert [e.title for e in rows] == ["C", "B"]
-        rows = db.get_events(event_type="view")
+        rows = db.get_events(uid, event_type="view")
         assert len(rows) == 3
     finally:
         db.close()
@@ -106,12 +123,13 @@ def test_get_events_filters_and_ordering():
 def test_unprocessed_and_mark_processed():
     db = _mem_db()
     try:
+        uid = _new_user(db)
         base = datetime(2026, 8, 1, 10, 0, 0)
-        db.insert_events([_make_event(i, base + timedelta(hours=i)) for i in range(3)])
-        unprocessed = db.get_unprocessed_events()
+        db.insert_events([_make_event(i, base + timedelta(hours=i)) for i in range(3)], uid)
+        unprocessed = db.get_unprocessed_events(uid)
         assert {e.id for e in unprocessed} == {"ev-1"}
-        db.mark_processed(["ev-1", "ev-2"])
-        assert db.get_unprocessed_events() == []
+        db.mark_processed(uid, ["ev-1", "ev-2"])
+        assert db.get_unprocessed_events(uid) == []
     finally:
         db.close()
 
@@ -119,14 +137,16 @@ def test_unprocessed_and_mark_processed():
 def test_sync_state_upsert_accumulates():
     db = _mem_db()
     try:
-        assert db.get_last_sync("bilibili") is None
-        db.update_sync_state("bilibili", last_event_id="e1", count=2)
-        db.update_sync_state("bilibili", last_event_id=None, count=3)
-        state = db.get_last_sync("bilibili")
+        uid = _new_user(db)
+        assert db.get_last_sync(uid, "bilibili") is None
+        db.update_sync_state(uid, "bilibili", last_event_id="e1", count=2)
+        db.update_sync_state(uid, "bilibili", last_event_id=None, count=3)
+        state = db.get_last_sync(uid, "bilibili")
         assert state is not None
         with db.engine.connect() as conn:
             row = conn.execute(
-                text("SELECT last_event_id, total_synced FROM sync_state WHERE source='bilibili'")
+                text("SELECT last_event_id, total_synced FROM sync_state WHERE user_id=:uid AND source='bilibili'"),
+                {"uid": uid},
             ).mappings().one()
         assert row["last_event_id"] == "e1"
         assert row["total_synced"] == 5
@@ -137,6 +157,7 @@ def test_sync_state_upsert_accumulates():
 def test_topic_upsert_and_query():
     db = _mem_db()
     try:
+        uid = _new_user(db)
         topic = Topic(
             id="t1",
             name="Python",
@@ -145,17 +166,17 @@ def test_topic_upsert_and_query():
             weight=1.0,
             related_topics=["编程", "后端"],
         )
-        db.insert_topic(topic)
+        db.insert_topic(topic, uid)
         topic.frequency = 8
         topic.weight = 2.0
-        db.insert_topic(topic)
+        db.insert_topic(topic, uid)
 
-        rows = db.get_topics()
+        rows = db.get_topics(uid)
         assert len(rows) == 1
         assert rows[0].frequency == 8
         assert rows[0].weight == 2.0
         assert rows[0].related_topics == ["编程", "后端"]
-        assert db.get_topics(category="nope") == []
+        assert db.get_topics(uid, category="nope") == []
     finally:
         db.close()
 
@@ -163,11 +184,13 @@ def test_topic_upsert_and_query():
 def test_event_topic_link_upsert():
     db = _mem_db()
     try:
-        db.link_event_topic("e1", "t1", relevance=0.5)
-        db.link_event_topic("e1", "t1", relevance=0.9)
+        uid = _new_user(db)
+        db.link_event_topic("e1", "t1", uid, relevance=0.5)
+        db.link_event_topic("e1", "t1", uid, relevance=0.9)
         with db.engine.connect() as conn:
             row = conn.execute(
-                text("SELECT relevance FROM event_topics WHERE event_id='e1' AND topic_id='t1'")
+                text("SELECT relevance FROM event_topics WHERE event_id='e1' AND topic_id='t1' AND user_id=:uid"),
+                {"uid": uid},
             ).mappings().one()
         assert row["relevance"] == 0.9
     finally:
@@ -177,6 +200,7 @@ def test_event_topic_link_upsert():
 def test_profile_roundtrip():
     db = _mem_db()
     try:
+        uid = _new_user(db)
         topic = Topic(
             id="topic-Python",
             name="Python",
@@ -199,10 +223,10 @@ def test_profile_roundtrip():
             insights=["测试"],
             event_ids=["ev-1", "ev-2", "ev-3"],
         )
-        db.insert_profile(profile)
-        db.insert_profile(profile)  # 幂等覆盖
+        db.insert_profile(profile, uid)
+        db.insert_profile(profile, uid)  # 幂等覆盖
 
-        rows = db.get_profiles(period="weekly")
+        rows = db.get_profiles(uid, period="weekly")
         assert len(rows) == 1
         assert rows[0].id == "p1"
         assert rows[0].total_events == 3
@@ -210,7 +234,7 @@ def test_profile_roundtrip():
         assert rows[0].top_topics[0].first_seen == datetime(2026, 7, 1, 8, 0, 0)
         assert rows[0].topic_clusters["cluster_0"]["count"] == 3
         assert rows[0].event_ids == ["ev-1", "ev-2", "ev-3"]
-        assert db.get_profiles(period="monthly") == []
+        assert db.get_profiles(uid, period="monthly") == []
     finally:
         db.close()
 
@@ -218,9 +242,10 @@ def test_profile_roundtrip():
 def test_stats():
     db = _mem_db()
     try:
+        uid = _new_user(db)
         base = datetime(2026, 8, 1, 10, 0, 0)
-        db.insert_events([_make_event(i, base + timedelta(hours=i)) for i in range(3)])
-        stats = db.get_stats()
+        db.insert_events([_make_event(i, base + timedelta(hours=i)) for i in range(3)], uid)
+        stats = db.get_stats(uid)
         assert stats["total"] == 3
         assert stats["by_source"] == {"test": 3}
         assert stats["by_type"] == {"view": 3}
@@ -238,15 +263,15 @@ def test_postgres_engine_and_sql_dialect():
     pg = postgresql.dialect()
     stmt_ignore = (
         dialect_insert(events, "postgresql")
-        .values(id="x", timestamp=datetime.now(), source="t", event_type="view", title="t")
+        .values(id="x", user_id="u", timestamp=datetime.now(), source="t", event_type="view", title="t")
         .on_conflict_do_nothing()
     )
     assert "ON CONFLICT" in str(stmt_ignore.compile(dialect=pg))
 
     stmt_upsert = (
         dialect_insert(events, "postgresql")
-        .values(id="x", timestamp=datetime.now(), source="t", event_type="view", title="t")
-        .on_conflict_do_update(index_elements=["id"], set_={"title": "new"})
+        .values(id="x", user_id="u", timestamp=datetime.now(), source="t", event_type="view", title="t")
+        .on_conflict_do_update(index_elements=["id", "user_id"], set_={"title": "new"})
     )
     compiled = str(stmt_upsert.compile(dialect=pg))
     assert "ON CONFLICT" in compiled
@@ -264,24 +289,26 @@ def test_live_postgres_roundtrip():
         metadata.drop_all(db.engine)
         db.init_tables()
         base = datetime(2026, 8, 1, 10, 0, 0)
+        uid = db.create_user("pg-user", "x" * 60, role="user", status="active")
         event = _make_event(1, base)
-        assert db.insert_event(event) is True
-        assert db.insert_event(event) is False
-        assert db.get_event_count() == 1
-        assert db.get_events()[0].tags == ["编程"]
+        assert db.insert_event(event, uid) is True
+        assert db.insert_event(event, uid) is False
+        assert db.get_event_count(uid) == 1
+        assert db.get_events(uid)[0].tags == ["编程"]
 
-        db.update_sync_state("test", last_event_id="e1", count=2)
-        db.update_sync_state("test", last_event_id=None, count=3)
+        db.update_sync_state(uid, "test", last_event_id="e1", count=2)
+        db.update_sync_state(uid, "test", last_event_id=None, count=3)
         with db.engine.connect() as conn:
             row = conn.execute(
-                text("SELECT total_synced FROM sync_state WHERE source='test'")
+                text("SELECT total_synced FROM sync_state WHERE user_id=:uid AND source='test'"),
+                {"uid": uid},
             ).mappings().one()
         assert row["total_synced"] == 5
 
         topic = Topic(id="t1", name="Python", category="general", frequency=1)
-        db.insert_topic(topic)
-        assert db.get_topics()[0].name == "Python"
-        db.link_event_topic(event.id, topic.id, relevance=1.0)
+        db.insert_topic(topic, uid)
+        assert db.get_topics(uid)[0].name == "Python"
+        db.link_event_topic(event.id, topic.id, uid, relevance=1.0)
     finally:
         metadata.drop_all(db.engine)
         db.close()

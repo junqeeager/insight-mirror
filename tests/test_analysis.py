@@ -75,6 +75,7 @@ def test_emerging_and_declining():
 def test_profile_generation_persists():
     db = Database(":memory:")
     db.init_tables()
+    uid = db.create_user("analyst", "x" * 60, role="user", status="active")
     base = datetime(2026, 8, 1, 10, 0, 0)
     titles = [
         "Python 编程入门教程",
@@ -84,13 +85,16 @@ def test_profile_generation_persists():
         "Vibe Coding 教程",
     ]
     for i, title in enumerate(titles):
-        db.insert_event(_make_event(i, base + timedelta(hours=i), title, tags=("编程", "教程")))
+        db.insert_event(
+            _make_event(i, base + timedelta(hours=i), title, tags=("编程", "教程")),
+            uid,
+        )
 
     generator = ProfileGenerator(db, {"top_n": 10})
-    profile = generator.generate(period="weekly", persist=True)
+    profile = generator.generate(user_id=uid, period="weekly", persist=True)
     assert profile.total_events == 5
 
-    topics = db.get_topics(limit=100)
+    topics = db.get_topics(uid, limit=100)
     assert topics, "topics 表不应为空"
     assert any(t.frequency > 0 for t in topics)
 

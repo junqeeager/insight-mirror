@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 from core.utils import load_config
 from frontend.data_access import get_events, get_stats
-from frontend.auth import require_auth
+from frontend.auth import require_login
 from frontend.layout import page_header, render_sidebar
 from frontend.theme import apply_theme
 
@@ -26,9 +26,9 @@ st.set_page_config(
 
 config = load_config()
 apply_theme()
-require_auth()
-stats = get_stats(config)
-render_sidebar(config, stats)
+user = require_login()
+stats = get_stats(config, user)
+render_sidebar(config, user, stats)
 
 page_header("个人认知画像", "基于行为数据生成的兴趣画像与数据看板")
 
@@ -46,7 +46,7 @@ with col4:
 
 # 最近事件
 st.subheader("最近事件")
-recent_events = get_events(config, limit=20)
+recent_events = get_events(config, user, limit=20)
 if recent_events:
     df = pd.DataFrame(
         [
@@ -70,10 +70,10 @@ with st.container(border=True):
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("同步 B 站数据", width="stretch"):
-            st.info("请运行: python scripts/sync.py --source bilibili")
+            st.info("请到设置页配置并同步你的数据源")
     with col2:
         if st.button("生成周报", width="stretch"):
-            st.info("请运行: python scripts/generate_report.py --period weekly")
+            st.info("请到报告视图页生成")
     with col3:
         if st.button("查看画像", width="stretch"):
             st.info("请访问侧边栏的画像页面")

@@ -1,6 +1,7 @@
 """数据库管理：SQLAlchemy Core 双后端（SQLite / PostgreSQL）"""
 
 import os
+import uuid
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +39,7 @@ events = Table(
     "events",
     metadata,
     Column("id", String, primary_key=True),
+    Column("user_id", String, primary_key=True),
     Column("timestamp", DateTime, nullable=False),
     Column("source", String, nullable=False),
     Column("event_type", String, nullable=False),
@@ -55,12 +57,14 @@ events = Table(
     Index("idx_events_source", "source"),
     Index("idx_events_type", "event_type"),
     Index("idx_events_processed", "processed"),
+    Index("idx_events_user", "user_id"),
 )
 
 topics = Table(
     "topics",
     metadata,
     Column("id", String, primary_key=True),
+    Column("user_id", String, primary_key=True),
     Column("name", String, nullable=False),
     Column("category", String, nullable=False),
     Column("frequency", Integer, default=0),
@@ -69,6 +73,7 @@ topics = Table(
     Column("last_seen", DateTime),
     Column("related_topics", JSON),
     Index("idx_topics_category", "category"),
+    Index("idx_topics_user", "user_id"),
 )
 
 event_topics = Table(
@@ -76,29 +81,65 @@ event_topics = Table(
     metadata,
     Column("event_id", String, ForeignKey("events.id"), primary_key=True),
     Column("topic_id", String, ForeignKey("topics.id"), primary_key=True),
+    Column("user_id", String, primary_key=True),
     Column("relevance", Float, default=1.0),
     Index("idx_event_topics_topic", "topic_id"),
+    Index("idx_event_topics_user", "user_id"),
 )
 
 profiles = Table(
     "profiles",
     metadata,
     Column("id", String, primary_key=True),
+    Column("user_id", String, primary_key=True),
     Column("timestamp", DateTime, nullable=False),
     Column("period", String, nullable=False),
     Column("data", JSON, nullable=False),
     Column("created_at", DateTime, default=datetime.now),
     Index("idx_profiles_period", "period", "timestamp"),
+    Index("idx_profiles_user", "user_id", "period", "timestamp"),
 )
 
 sync_state = Table(
     "sync_state",
     metadata,
+    Column("user_id", String, primary_key=True),
     Column("source", String, primary_key=True),
     Column("last_sync", DateTime),
     Column("last_event_id", String),
     Column("total_synced", Integer, default=0),
     Column("config", JSON),
+)
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("username", String, nullable=False, unique=True),
+    Column("password_hash", String, nullable=False),
+    Column("role", String, nullable=False, default="user"),
+    Column("status", String, nullable=False, default="pending"),
+    Column("created_at", DateTime, default=datetime.now),
+    Column("last_login_at", DateTime),
+)
+
+sessions = Table(
+    "sessions",
+    metadata,
+    Column("token_hash", String, primary_key=True),
+    Column("user_id", String, ForeignKey("users.id"), nullable=False),
+    Column("created_at", DateTime, default=datetime.now),
+    Column("expires_at", DateTime, nullable=False),
+    Index("idx_sessions_user", "user_id"),
+)
+
+source_configs = Table(
+    "source_configs",
+    metadata,
+    Column("user_id", String, ForeignKey("users.id"), primary_key=True),
+    Column("source", String, primary_key=True),
+    Column("config", JSON),
+    Column("enabled", Boolean, default=True),
 )
 
 
@@ -196,23 +237,21 @@ class Database:
             "processed": bool(event.processed),
         }
 
-    def insert_event(self, event: Event) -> bool:
+    def insert_event(self, event: Event, user_id: str) -> bool:
         """插入单条事件；主键冲突时忽略并返回 False。"""
-        stmt = (
-            dialect_insert(events, self.dialect)
-            .on_conflict_do_nothing()
-            .returning(events.c.id)
-        )
+        row_values = self._event_row(event)
+        row_values["user_id"] = user_id
+        stmt = dialect_insert(events, self.dialect).on_conflict_do_nothing().returning(events.c.id)
         with self.engine.begin() as conn:
-            row = conn.execute(stmt, self._event_row(event)).first()
+            row = conn.execute(stmt, row_values).first()
         return row is not None
 
-    def insert_events(self, events_: List[Event]) -> int:
+    def insert_events(self, events_: List[Event], user_id: str) -> int:
         """批量插入事件，返回实际插入数量（单事务）。"""
         if not events_:
             return 0
         stmt = dialect_insert(events, self.dialect).on_conflict_do_nothing()
-        rows = [self._event_row(event) for event in events_]
+        rows = [{**self._event_row(event), "user_id": user_id} for event in events_]
         with self.engine.begin() as conn:
             before = conn.execute(select(func.count()).select_from(events)).scalar_one()
             conn.execute(stmt, rows)
@@ -221,13 +260,19 @@ class Database:
 
     def get_events(
         self,
+        user_id: str,
         source: Optional[str] = None,
         event_type: Optional[str] = None,
         since: Optional[datetime] = None,
         limit: int = 1000,
     ) -> List[Event]:
         """查询事件，按时间倒序。"""
-        stmt = select(events).order_by(events.c.timestamp.desc()).limit(limit)
+        stmt = (
+            select(events)
+            .where(events.c.user_id == user_id)
+            .order_by(events.c.timestamp.desc())
+            .limit(limit)
+        )
         if source:
             stmt = stmt.where(events.c.source == source)
         if event_type:
@@ -238,11 +283,11 @@ class Database:
             rows = conn.execute(stmt).mappings().all()
         return [self._row_to_event(row) for row in rows]
 
-    def get_unprocessed_events(self, limit: int = 500) -> List[Event]:
+    def get_unprocessed_events(self, user_id: str, limit: int = 500) -> List[Event]:
         """获取未处理的事件。"""
         stmt = (
             select(events)
-            .where(events.c.processed.is_(False))
+            .where(events.c.user_id == user_id, events.c.processed.is_(False))
             .order_by(events.c.timestamp)
             .limit(limit)
         )
@@ -250,21 +295,23 @@ class Database:
             rows = conn.execute(stmt).mappings().all()
         return [self._row_to_event(row) for row in rows]
 
-    def mark_processed(self, event_ids: List[str]):
+    def mark_processed(self, user_id: str, event_ids: List[str]):
         """标记事件为已处理。"""
         if not event_ids:
             return
         stmt = (
             update(events)
-            .where(events.c.id.in_(event_ids))
+            .where(events.c.user_id == user_id, events.c.id.in_(event_ids))
             .values(processed=True)
         )
         with self.engine.begin() as conn:
             conn.execute(stmt)
 
-    def get_last_sync(self, source: str) -> Optional[datetime]:
+    def get_last_sync(self, user_id: str, source: str) -> Optional[datetime]:
         """获取数据源最后同步时间。"""
-        stmt = select(sync_state.c.last_sync).where(sync_state.c.source == source)
+        stmt = select(sync_state.c.last_sync).where(
+            sync_state.c.user_id == user_id, sync_state.c.source == source
+        )
         with self.engine.connect() as conn:
             row = conn.execute(stmt).mappings().first()
         if row and row["last_sync"]:
@@ -272,17 +319,22 @@ class Database:
         return None
 
     def update_sync_state(
-        self, source: str, last_event_id: Optional[str] = None, count: int = 0
+        self,
+        user_id: str,
+        source: str,
+        last_event_id: Optional[str] = None,
+        count: int = 0,
     ):
         """更新同步状态（upsert，保留 last_event_id 并累加 total_synced）。"""
         stmt = dialect_insert(sync_state, self.dialect).values(
+            user_id=user_id,
             source=source,
             last_sync=datetime.now(),
             last_event_id=last_event_id,
             total_synced=count,
         )
         stmt = stmt.on_conflict_do_update(
-            index_elements=[sync_state.c.source],
+            index_elements=[sync_state.c.user_id, sync_state.c.source],
             set_={
                 "last_sync": stmt.excluded.last_sync,
                 "last_event_id": func.coalesce(
@@ -294,10 +346,11 @@ class Database:
         with self.engine.begin() as conn:
             conn.execute(stmt)
 
-    def insert_topic(self, topic: Topic):
+    def insert_topic(self, topic: Topic, user_id: str):
         """插入或整体更新主题。"""
         stmt = dialect_insert(topics, self.dialect).values(
             id=topic.id,
+            user_id=user_id,
             name=topic.name,
             category=topic.category,
             frequency=topic.frequency,
@@ -307,7 +360,7 @@ class Database:
             related_topics=topic.related_topics,
         )
         stmt = stmt.on_conflict_do_update(
-            index_elements=[topics.c.id],
+            index_elements=[topics.c.id, topics.c.user_id],
             set_={
                 "name": stmt.excluded.name,
                 "category": stmt.excluded.category,
@@ -321,31 +374,39 @@ class Database:
         with self.engine.begin() as conn:
             conn.execute(stmt)
 
-    def link_event_topic(self, event_id: str, topic_id: str, relevance: float = 1.0):
+    def link_event_topic(
+        self, event_id: str, topic_id: str, user_id: str, relevance: float = 1.0
+    ):
         """建立事件与主题的关联（存在则更新 relevance）。"""
         stmt = dialect_insert(event_topics, self.dialect).values(
             event_id=event_id,
             topic_id=topic_id,
+            user_id=user_id,
             relevance=relevance,
         )
         stmt = stmt.on_conflict_do_update(
-            index_elements=[event_topics.c.event_id, event_topics.c.topic_id],
+            index_elements=[
+                event_topics.c.event_id,
+                event_topics.c.topic_id,
+                event_topics.c.user_id,
+            ],
             set_={"relevance": stmt.excluded.relevance},
         )
         with self.engine.begin() as conn:
             conn.execute(stmt)
 
-    def insert_profile(self, profile: Profile):
+    def insert_profile(self, profile: Profile, user_id: str):
         """保存画像快照（存在则整体覆盖）。"""
         stmt = dialect_insert(profiles, self.dialect).values(
             id=profile.id,
+            user_id=user_id,
             timestamp=profile.timestamp,
             period=profile.period,
             data=_json_compatible(asdict(profile)),
             created_at=datetime.now(),
         )
         stmt = stmt.on_conflict_do_update(
-            index_elements=[profiles.c.id],
+            index_elements=[profiles.c.id, profiles.c.user_id],
             set_={
                 "timestamp": stmt.excluded.timestamp,
                 "period": stmt.excluded.period,
@@ -356,9 +417,16 @@ class Database:
         with self.engine.begin() as conn:
             conn.execute(stmt)
 
-    def get_profiles(self, period: Optional[str] = None, limit: int = 10) -> List[Profile]:
+    def get_profiles(
+        self, user_id: str, period: Optional[str] = None, limit: int = 10
+    ) -> List[Profile]:
         """查询画像快照。"""
-        stmt = select(profiles).order_by(profiles.c.timestamp.desc()).limit(limit)
+        stmt = (
+            select(profiles)
+            .where(profiles.c.user_id == user_id)
+            .order_by(profiles.c.timestamp.desc())
+            .limit(limit)
+        )
         if period:
             stmt = stmt.where(profiles.c.period == period)
         with self.engine.connect() as conn:
@@ -404,38 +472,214 @@ class Database:
             )
         return profiles_out
 
-    def get_topics(self, category: Optional[str] = None, limit: int = 50) -> List[Topic]:
+    def get_topics(
+        self, user_id: str, category: Optional[str] = None, limit: int = 50
+    ) -> List[Topic]:
         """查询主题，按频率倒序。"""
-        stmt = select(topics).order_by(topics.c.frequency.desc()).limit(limit)
+        stmt = (
+            select(topics)
+            .where(topics.c.user_id == user_id)
+            .order_by(topics.c.frequency.desc())
+            .limit(limit)
+        )
         if category:
             stmt = stmt.where(topics.c.category == category)
         with self.engine.connect() as conn:
             rows = conn.execute(stmt).mappings().all()
         return [self._row_to_topic(row) for row in rows]
 
-    def get_event_count(self, source: Optional[str] = None) -> int:
+    def get_event_count(self, user_id: str, source: Optional[str] = None) -> int:
         """获取事件总数。"""
-        stmt = select(func.count()).select_from(events)
+        stmt = select(func.count()).select_from(events).where(events.c.user_id == user_id)
         if source:
             stmt = stmt.where(events.c.source == source)
         with self.engine.connect() as conn:
             return conn.execute(stmt).scalar_one()
 
-    def get_stats(self) -> dict:
+    def get_stats(self, user_id: str) -> dict:
         """获取整体统计。"""
         with self.engine.connect() as conn:
-            total = conn.execute(select(func.count()).select_from(events)).scalar_one()
+            total = conn.execute(
+                select(func.count()).select_from(events).where(events.c.user_id == user_id)
+            ).scalar_one()
             by_source = dict(
                 conn.execute(
-                    select(events.c.source, func.count()).group_by(events.c.source)
+                    select(events.c.source, func.count())
+                    .where(events.c.user_id == user_id)
+                    .group_by(events.c.source)
                 ).all()
             )
             by_type = dict(
                 conn.execute(
-                    select(events.c.event_type, func.count()).group_by(events.c.event_type)
+                    select(events.c.event_type, func.count())
+                    .where(events.c.user_id == user_id)
+                    .group_by(events.c.event_type)
                 ).all()
             )
         return {"total": total, "by_source": by_source, "by_type": by_type}
+
+    # ---------- 账号与会话 ----------
+
+    def create_user(
+        self,
+        username: str,
+        password_hash: str,
+        role: str = "user",
+        status: str = "pending",
+    ) -> str:
+        """创建用户，返回 user_id。"""
+        user_id = f"user-{uuid.uuid4().hex[:12]}"
+        with self.engine.begin() as conn:
+            conn.execute(
+                users.insert().values(
+                    id=user_id,
+                    username=username,
+                    password_hash=password_hash,
+                    role=role,
+                    status=status,
+                    created_at=datetime.now(),
+                )
+            )
+        return user_id
+
+    def get_user_by_username(self, username: str) -> Optional[dict]:
+        """按用户名查用户。"""
+        stmt = select(users).where(users.c.username == username)
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt).mappings().first()
+        return dict(row) if row else None
+
+    def get_user_by_id(self, user_id: str) -> Optional[dict]:
+        """按 ID 查用户。"""
+        stmt = select(users).where(users.c.id == user_id)
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt).mappings().first()
+        return dict(row) if row else None
+
+    def list_users(self) -> List[dict]:
+        """列出全部用户（按创建时间排序）。"""
+        stmt = select(users).order_by(users.c.created_at)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt).mappings().all()
+        return [dict(row) for row in rows]
+
+    def update_user_status(self, user_id: str, status: str) -> bool:
+        """更新用户状态（pending/active/disabled）。"""
+        stmt = update(users).where(users.c.id == user_id).values(status=status)
+        with self.engine.begin() as conn:
+            return conn.execute(stmt).rowcount > 0
+
+    def update_user_password(self, user_id: str, password_hash: str) -> bool:
+        """重置用户密码。"""
+        stmt = (
+            update(users)
+            .where(users.c.id == user_id)
+            .values(password_hash=password_hash)
+        )
+        with self.engine.begin() as conn:
+            return conn.execute(stmt).rowcount > 0
+
+    def touch_last_login(self, user_id: str) -> None:
+        """记录最后登录时间。"""
+        stmt = update(users).where(users.c.id == user_id).values(last_login_at=datetime.now())
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    def create_session(self, token_hash: str, user_id: str, expires_at: datetime) -> None:
+        """创建会话（只存 token 哈希）。"""
+        with self.engine.begin() as conn:
+            conn.execute(
+                sessions.insert().values(
+                    token_hash=token_hash,
+                    user_id=user_id,
+                    created_at=datetime.now(),
+                    expires_at=expires_at,
+                )
+            )
+
+    def get_session_user(self, token_hash: str) -> Optional[dict]:
+        """按 token 哈希取有效会话对应的 active 用户。"""
+        stmt = (
+            select(users, sessions.c.expires_at)
+            .select_from(sessions.join(users, sessions.c.user_id == users.c.id))
+            .where(sessions.c.token_hash == token_hash)
+        )
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt).mappings().first()
+        if not row:
+            return None
+        user = dict(row)
+        if user["status"] != "active":
+            self.delete_session(token_hash)
+            return None
+        expires = user.pop("expires_at", None)
+        if expires and expires <= datetime.now():
+            self.delete_session(token_hash)
+            return None
+        return {
+            "id": user["id"],
+            "username": user["username"],
+            "role": user["role"],
+            "status": user["status"],
+            "created_at": user["created_at"],
+            "last_login_at": user["last_login_at"],
+        }
+
+    def delete_session(self, token_hash: str) -> None:
+        """删除会话（登出/失效）。"""
+        from sqlalchemy import delete
+
+        stmt = delete(sessions).where(sessions.c.token_hash == token_hash)
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    # ---------- 用户数据源配置 ----------
+
+    def get_source_config(self, user_id: str, source: str) -> Optional[dict]:
+        """读取某个用户单个数据源的配置。"""
+        stmt = select(source_configs).where(
+            source_configs.c.user_id == user_id, source_configs.c.source == source
+        )
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt).mappings().first()
+        return dict(row) if row else None
+
+    def set_source_config(
+        self, user_id: str, source: str, config: dict, enabled: bool = True
+    ) -> None:
+        """保存某个用户的数据源配置（upsert）。"""
+        stmt = dialect_insert(source_configs, self.dialect).values(
+            user_id=user_id,
+            source=source,
+            config=config,
+            enabled=enabled,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[source_configs.c.user_id, source_configs.c.source],
+            set_={"config": stmt.excluded.config, "enabled": stmt.excluded.enabled},
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    def list_source_configs(self, user_id: str) -> List[dict]:
+        """列出某个用户的全部数据源配置。"""
+        stmt = select(source_configs).where(source_configs.c.user_id == user_id)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt).mappings().all()
+        return [dict(row) for row in rows]
+
+    def list_active_user_source_configs(self) -> List[dict]:
+        """列出所有 active 用户启用的数据源配置（供同步 daemon 使用）。"""
+        stmt = (
+            select(source_configs)
+            .select_from(
+                source_configs.join(users, source_configs.c.user_id == users.c.id)
+            )
+            .where(users.c.status == "active", source_configs.c.enabled.is_(True))
+        )
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt).mappings().all()
+        return [dict(row) for row in rows]
 
     @staticmethod
     def _row_to_event(row) -> Event:

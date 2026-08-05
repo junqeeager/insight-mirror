@@ -40,7 +40,7 @@ docker compose up app                  # run the app in Docker
 - `tests/test_analysis.py`, `tests/test_plugins.py`, `tests/test_api.py` are pytest-compatible; run `python tests/test_api.py` outside sandboxed shells (asyncio threadpools are blocked inside them).
 - `tests/test_graph.py` covers the precomputed interest graph used by `GET /api/v1/graph`.
 - `tests/test_frontend_theme.py` covers the Astryx theme assets and Streamlit selector mapping.
-- `tests/test_frontend_auth.py` covers the Streamlit password gate (AppTest + in-memory fake data).
+- `tests/test_frontend_auth.py` covers the Streamlit login/register gate (AppTest + in-memory fake data).
 - Name test files `test_*.py` and functions `test_*()`.
 - Tests must be offline: use in-memory databases and sample data, never real cookies or live APIs.
 
@@ -55,7 +55,7 @@ docker compose up app                  # run the app in Docker
 ## Security & Configuration
 
 - Secrets live in `.env` (gitignored); `config.yaml` references them as `${VAR}` and never stores real values.
-- `APP_PASSWORD` in `.env` gates the public Streamlit dashboard (`frontend/auth.py`); the password is compared with `secrets.compare_digest` and is never committed.
+- Accounts use scrypt-hashed passwords (`frontend/auth.py` login/register, API Bearer tokens); per-user source credentials are encrypted with `APP_SECRET_KEY`; `APP_PASSWORD` is no longer used.
 - Enable/disable sources and tune analysis via `config.yaml`; database URL defaults to `sqlite:///./data/profile.db`.
 - `DATABASE_URL` (or `database.url` in `config.yaml`) selects the backend: `sqlite:///...` or `postgresql+psycopg://...`; run `python scripts/migrate_db.py --from-url ... --to-url ...` to copy data across backends.
 - Redact cookies/tokens when showing config in the frontend settings page.

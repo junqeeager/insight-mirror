@@ -1,57 +1,168 @@
-"""公开看板访问密码门"""
+"""登录 / 注册鉴权（API 优先，失败回退直连数据库）"""
 
-import os
-import secrets
+import re
+import sys
 from pathlib import Path
 
+import httpx
 import streamlit as st
 
-try:
-    from dotenv import load_dotenv
-except ImportError:  # pragma: no cover - 项目依赖中始终安装 python-dotenv
-    load_dotenv = None
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from core.auth import hash_password, verify_password  # noqa: E402
+from core.database import Database, database_url  # noqa: E402
+from core.utils import load_config  # noqa: E402
+
+_API_TIMEOUT = 3.0
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_\u4e00-\u9fa5]{3,32}$")
 
 
-def _load_env() -> None:
-    """从项目根目录加载 .env（不覆盖已存在的环境变量）。"""
-    env_path = Path(".env")
-    if load_dotenv is not None and env_path.exists():
-        load_dotenv(env_path)
+def _api_base(config: dict) -> str:
+    return config.get("frontend", {}).get("api_base", "http://localhost:8502").rstrip("/")
 
 
-def _password_configured() -> bool:
-    """检查是否配置了 APP_PASSWORD。"""
-    return bool(os.environ.get("APP_PASSWORD"))
+def _use_api(config: dict) -> bool:
+    return config.get("frontend", {}).get("use_api", True)
 
 
-def _verify_password(password: str) -> bool:
-    """使用常量时间比较校验密码，避免时序侧信道。"""
-    expected = os.environ.get("APP_PASSWORD", "")
-    return secrets.compare_digest(password, expected)
+def _db(config: dict) -> Database:
+    db = Database(database_url(config))
+    db.init_tables()
+    return db
 
 
-def require_auth() -> None:
-    """在数据渲染前调用；未登录时展示登录页并停止后续脚本执行。"""
-    _load_env()
+def _validate(username: str, password: str) -> str:
+    if not _USERNAME_RE.match(username):
+        return "用户名需为 3-32 位字母/数字/下划线/中文"
+    if len(password) < 8:
+        return "密码至少 8 位"
+    return ""
 
-    if st.session_state.get("authenticated"):
-        return
 
-    st.markdown("### 🔒 需要访问密码")
+def register_user(config: dict, username: str, password: str) -> tuple:
+    """注册（pending）；返回 (ok, message)。"""
+    username = username.strip().lower()
+    error = _validate(username, password)
+    if error:
+        return False, error
+    if _use_api(config):
+        try:
+            resp = httpx.post(
+                f"{_api_base(config)}/api/v1/auth/register",
+                json={"username": username, "password": password},
+                timeout=_API_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                return True, "注册成功，请等待管理员审核后登录"
+            detail = resp.json().get("detail", "注册失败")
+            return False, detail if isinstance(detail, str) else "注册失败"
+        except Exception:
+            logger_warning("注册 API 不可用，回退直连数据库")
+    db = _db(config)
+    try:
+        if db.get_user_by_username(username):
+            return False, "用户名已存在"
+        db.create_user(username, hash_password(password), role="user", status="pending")
+        return True, "注册成功，请等待管理员审核后登录"
+    finally:
+        db.close()
 
-    if not _password_configured():
-        st.error(
-            "服务器未配置 APP_PASSWORD 环境变量，无法提供登录访问。"
-            "请管理员在 .env 中设置 APP_PASSWORD 后重启 Streamlit。"
+
+def login_user(config: dict, username: str, password: str) -> tuple:
+    """登录；返回 (ok, user, token, message)。"""
+    username = username.strip().lower()
+    if _use_api(config):
+        try:
+            resp = httpx.post(
+                f"{_api_base(config)}/api/v1/auth/login",
+                json={"username": username, "password": password},
+                timeout=_API_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return True, data["user"], data["token"], None
+            detail = resp.json().get("detail", "登录失败")
+            return False, None, None, detail if isinstance(detail, str) else "登录失败"
+        except Exception:
+            logger_warning("登录 API 不可用，回退直连数据库")
+    db = _db(config)
+    try:
+        user = db.get_user_by_username(username)
+        if not user or not verify_password(password, user["password_hash"]):
+            return False, None, None, "用户名或密码错误"
+        if user["status"] != "active":
+            return False, None, None, "账号未启用，请联系管理员"
+        return (
+            True,
+            {
+                "id": user["id"],
+                "username": user["username"],
+                "role": user["role"],
+                "status": user["status"],
+            },
+            None,
+            None,
         )
-        st.stop()
+    finally:
+        db.close()
 
-    password = st.text_input("请输入访问密码", type="password", key="auth_password")
-    if st.button("登录", width="stretch"):
-        if _verify_password(password):
-            st.session_state["authenticated"] = True
-            st.rerun()
+
+def require_login() -> dict:
+    """数据渲染前调用；未登录时展示登录/注册页并停止后续脚本。"""
+    user = st.session_state.get("user")
+    if user:
+        return user
+
+    config = load_config()
+    st.markdown("### 🔐 登录 / 注册")
+    mode = st.radio("登录方式", ["登录", "注册"], horizontal=True, key="auth_mode")
+    username = st.text_input("用户名", key="auth_username")
+    password = st.text_input("密码", type="password", key="auth_password")
+    confirm = None
+    if mode == "注册":
+        confirm = st.text_input("确认密码", type="password", key="auth_confirm")
+
+    if st.button("登录" if mode == "登录" else "注册", width="stretch"):
+        if mode == "注册":
+            if password != confirm:
+                st.error("两次输入的密码不一致")
+            else:
+                ok, message = register_user(config, username, password)
+                if ok:
+                    st.success(message)
+                else:
+                    st.error(message)
         else:
-            st.error("密码错误，请重试。")
-
+            ok, user, token, message = login_user(config, username, password)
+            if ok:
+                st.session_state["user"] = user
+                st.session_state["token"] = token
+                st.rerun()
+            else:
+                st.error(message)
     st.stop()
+
+
+def logout() -> None:
+    """清除登录态（token 由 API 端失效）。"""
+    config = load_config()
+    token = st.session_state.get("token")
+    if token and _use_api(config):
+        try:
+            httpx.post(
+                f"{_api_base(config)}/api/v1/auth/logout",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=_API_TIMEOUT,
+            )
+        except Exception:
+            pass
+    st.session_state.pop("user", None)
+    st.session_state.pop("token", None)
+
+
+def logger_warning(message: str) -> None:
+    import logging
+
+    logging.getLogger("frontend.auth").warning(message)

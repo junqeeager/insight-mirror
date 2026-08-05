@@ -5,15 +5,18 @@ from typing import Optional
 import streamlit as st
 
 from frontend.data_access import get_stats
+from frontend.auth import logout
 
 
-def render_sidebar(config: dict, stats: Optional[dict] = None) -> dict:
+def render_sidebar(config: dict, user: dict, stats: Optional[dict] = None) -> dict:
     """渲染统一侧边栏；未传入 stats 时自动查询（结果带 TTL 缓存）。"""
     if stats is None:
-        stats = get_stats(config)
+        stats = get_stats(config, user)
 
     with st.sidebar:
         st.markdown("### 个人认知画像")
+        role_label = "管理员" if user.get("role") == "admin" else "用户"
+        st.caption(f"{user.get('username')}（{role_label}）")
         st.markdown("---")
         st.metric("总事件数", stats.get("total", 0))
         st.markdown("---")
@@ -25,9 +28,9 @@ def render_sidebar(config: dict, stats: Optional[dict] = None) -> dict:
         else:
             st.caption("暂无数据源")
         st.markdown("---")
-        st.caption("数据由本地 SQLite 提供，页面响应走 FastAPI 缓存。")
+        st.caption("数据由本地数据库提供，页面响应走 FastAPI 缓存。")
         if st.button("退出登录", width="stretch"):
-            st.session_state.pop("authenticated", None)
+            logout()
             st.rerun()
     return stats
 

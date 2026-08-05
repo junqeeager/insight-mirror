@@ -7,7 +7,17 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api.routers import events, graph, profile, stats, topics
+from api.routers import (
+    admin,
+    auth,
+    events,
+    graph,
+    profile,
+    sources,
+    stats,
+    sync,
+    topics,
+)
 
 logger = logging.getLogger("api")
 
@@ -43,6 +53,10 @@ app.include_router(topics.router)
 app.include_router(profile.router)
 app.include_router(stats.router)
 app.include_router(graph.router)
+app.include_router(auth.router)
+app.include_router(sources.router)
+app.include_router(sync.router)
+app.include_router(admin.router)
 
 
 @app.exception_handler(Exception)

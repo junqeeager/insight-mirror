@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import datetime
 
 from core.utils import load_config
-from frontend.auth import require_auth
+from frontend.auth import require_login
 from report.generator import ReportGenerator
 from frontend.data_access import (
     generate_profile,
@@ -29,15 +29,16 @@ st.set_page_config(page_title="报告视图", page_icon="📋", layout="wide")
 
 config = load_config()
 apply_theme()
-require_auth()
-render_sidebar(config)
+user = require_login()
+render_sidebar(config, user)
 page_header("报告视图", "查看最近画像快照并生成完整 HTML 报告")
 
 
 def _finish_report(profile, period: str):
     """生成 HTML 报告并写入会话状态"""
     report_gen = ReportGenerator()
-    report_path = report_gen.generate_html(profile)
+    report_dir = f"./data/reports/{user.get('username', 'user')}"
+    report_path = report_gen.generate_html(profile, output_dir=report_dir)
     st.success(f"报告已生成！")
     st.session_state["latest_profile"] = profile
     st.session_state["latest_report_path"] = report_path
@@ -51,7 +52,7 @@ with col1:
     period = st.selectbox("报告周期", ["weekly", "monthly", "yearly"])
 with col2:
     if st.button("生成报告", width="stretch"):
-        task_id = start_profile_refresh(config, period=period)
+        task_id = start_profile_refresh(config, user, period=period)
         if task_id:
             # 后台任务模式：立即返回，页面轮询状态
             st.session_state["refresh_task_id"] = task_id
@@ -60,13 +61,13 @@ with col2:
         else:
             # API 不可用：回退为本地同步生成
             with st.spinner("正在生成报告..."):
-                profile = generate_profile(config, period=period)
+                profile = generate_profile(config, user, period=period)
             _finish_report(profile, period)
 
 # 后台任务轮询（非阻塞）
 task_id = st.session_state.get("refresh_task_id")
 if task_id:
-    status = get_task_status(config, task_id)
+    status = get_task_status(config, user, task_id)
     if status is None:
         st.warning("暂时无法连接 API，任务状态未知；请稍后刷新页面查看。")
     elif status["status"] in ("running", "started"):
@@ -80,7 +81,7 @@ if task_id:
             st.warning("生成超时，请稍后手动刷新页面查看。")
     elif status["status"] == "done":
         period_now = st.session_state.get("refresh_period", "weekly")
-        profile = get_latest_profile(config, period=period_now, fresh=True)
+        profile = get_latest_profile(config, user, period=period_now, fresh=True)
         st.session_state.pop("refresh_task_id", None)
         st.session_state.pop("refresh_attempts", None)
         st.session_state.pop("refresh_period", None)

@@ -14,7 +14,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 from core.utils import load_config
-from frontend.auth import require_auth
+from frontend.auth import require_login
 from frontend.data_access import get_events
 from frontend.layout import page_header, render_sidebar
 from frontend.theme import apply_theme
@@ -23,8 +23,8 @@ st.set_page_config(page_title="时间视图", page_icon="📈", layout="wide")
 
 config = load_config()
 apply_theme()
-require_auth()
-render_sidebar(config)
+user = require_login()
+render_sidebar(config, user)
 page_header("时间视图", "按时间范围观察事件分布与活跃时段")
 
 
@@ -32,7 +32,7 @@ page_header("时间视图", "按时间范围观察事件分布与活跃时段")
 def build_time_view(source, event_type, since_iso, limit, data_key):
     """构建时间视图的 DataFrame 与图表（60s 缓存，数据变化后自动重建）"""
     since = datetime.fromisoformat(since_iso) if since_iso else None
-    events = get_events(config, source=source, event_type=event_type, since=since, limit=limit)
+    events = get_events(config, user, source=source, event_type=event_type, since=since, limit=limit)
     if not events:
         return None, None, None, None, None
 

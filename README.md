@@ -49,7 +49,7 @@ Streamlit 前端优先调用 FastAPI（带 TTL 缓存），API 不可用时自�
 pip install -r requirements.txt
 ```
 
-### 2. 配置数据源与访问密码
+### 2. 配置数据源与账号
 
 复制 `.env.example` 为 `.env` 并填入配置：
 
@@ -60,22 +60,28 @@ cp .env.example .env
 编辑 `.env` 文件：
 
 - 填入你的 B站 Cookie、GitHub Token 等凭据；
-- 设置 `APP_PASSWORD` 作为公开看板的访问密码（不设置时看板会拒绝访问并提示）。
+- 设置 `APP_SECRET_KEY`（随机长字符串，用于加密每个用户的数据源凭据，可用 `openssl rand -hex 32` 生成）。
 
 ### 3. 初始化数据库
 
 ```bash
 python scripts/init_db.py
+
+# 旧版（单用户）数据库升级为多用户结构，并把现有数据归入管理员
+python scripts/migrate_multiuser.py --admin-username admin
+
+# 创建管理员（新库或在迁移时跳过密码输入时使用）
+python scripts/manage_users.py create-admin --username admin
 ```
 
 ### 4. 同步数据
 
 ```bash
-# 同步所有已启用的数据源
+# 同步所有 active 用户的数据源
 python scripts/sync.py
 
-# 或同步单个数据源
-python scripts/sync.py --source bilibili
+# 或同步指定用户的单个数据源
+python scripts/sync.py --user alice --source bilibili
 ```
 
 ### 5. 启动前端
@@ -134,7 +140,7 @@ personal-profile/
 │
 ├── frontend/                # Streamlit 前端
 │   ├── app.py              # 主入口
-│   ├── auth.py             # 公开看板密码门
+│   ├── auth.py             # 登录/注册鉴权
 │   ├── theme.py            # Astryx 主题注入（纯 CSS）
 │   ├── layout.py           # 共享侧边栏与页头
 │   ├── assets/             # Astryx neutral 预编译 CSS（固定版本）
@@ -169,13 +175,22 @@ make run-api   # 等价于 uvicorn api.main:app --host 0.0.0.0 --port 8502
 | `POST` | `/api/v1/profile/refresh` | 后台重建画像 |
 | `GET` | `/api/v1/profile/refresh/{task_id}` | 查询画像重建任务状态 |
 | `GET` | `/api/v1/graph` | 兴趣共现图（后端预计算，5 分钟缓存） |
+| `POST` | `/api/v1/auth/register` | 注册（默认待管理员审核） |
+| `POST` | `/api/v1/auth/login` | 登录并签发会话 token |
+| `POST` | `/api/v1/auth/logout` | 登出并使 token 失效 |
+| `GET/PUT` | `/api/v1/sources` | 查看/保存自己的数据源配置 |
+| `POST` | `/api/v1/sources/{source}/test` | 测试自己的数据源连接 |
+| `POST/GET` | `/api/v1/sync` | 触发/查询自己的数据同步任务 |
+| `GET/PATCH` | `/api/v1/admin/users` | 管理员列出/审核/禁用/重置用户 |
+
+除 `/health` 和注册/登录外，所有 API 都需要 `Authorization: Bearer <token>`，并按登录用户隔离数据。
 
 Streamlit 通过 `frontend/data_access.py` 优先调用 API，API 不可用时自动回退直连 SQLite；数据结果带 TTL 缓存（30s/60s/300s）。
 
 ## 🧪 测试与开发命令
 
 ```bash
-make test       # 数据库双后端 + 分析 + 插件 + 前端主题/密码门测试
+make test       # 数据库双后端 + 分析 + 插件 + 账号体系 + 前端鉴权测试
 make test-api   # API 测试（需在非沙箱环境运行）
 make init-db    # 初始化数据库
 make sync       # 同步所有数据源
@@ -184,11 +199,11 @@ make run-web    # 启动 Streamlit
 
 ## 🔒 隐私与安全
 
-- 所有 Cookie / Token 仅保存在本地 `.env`（已被 `.gitignore` 排除），`config.yaml` 只通过 `${VAR}` 引用，仓库中不包含任何真实凭据。
-- 公开 Streamlit 看板带简单密码门（`frontend/auth.py`）：密码来自 `.env` 的 `APP_PASSWORD`，使用 `secrets.compare_digest` 校验；未配置密码时页面会阻塞并提示，未登录前不会渲染任何个人数据。
+- 账号体系：注册后需管理员批准；密码使用 scrypt 加盐哈希，会话 token 只存哈希、30 天有效；未登录不渲染任何个人数据。
+- 每个用户的数据源凭据（B站 Cookie、GitHub Token 等）加密后存数据库，使用 `.env` 的 `APP_SECRET_KEY` 派生密钥，界面展示始终脱敏；`config.yaml` 只通过 `${VAR}` 引用，仓库中不包含任何真实凭据。
 - 设置页展示配置时自动脱敏 Cookie / Token / Secret。
 - FastAPI 服务默认仅监听本机（:8502），Cloudflare 隧道只转发 Streamlit 端口（:8501），不会把 API 直接暴露到公网。
-- 仓库公开且每次 commit 会自动推送到 GitHub：`deploy/pre-push` 钩子（由 `setup.sh` 安装）会在推送前运行 `scripts/check_secrets.py`，检测到 B 站 Cookie、GitHub Token、`APP_PASSWORD` 字面值、私钥、带密码的数据库 URL 等真实凭据时阻止推送。
+- 仓库公开且每次 commit 会自动推送到 GitHub：`deploy/pre-push` 钩子（由 `setup.sh` 安装）会在推送前运行 `scripts/check_secrets.py`，检测到 B 站 Cookie、GitHub Token、私钥、带密码的数据库 URL 等真实凭据时阻止推送。
 
 ## 🔌 添加新数据源
 

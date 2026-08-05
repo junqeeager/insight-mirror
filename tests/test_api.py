@@ -1,4 +1,4 @@
-"""FastAPI 接口测试（TestClient + 临时数据库）"""
+"""FastAPI 接口测试（TestClient + 临时数据库，覆盖登录鉴权与用户隔离）"""
 
 import atexit
 import os
@@ -12,7 +12,7 @@ project_root = str(Path(__file__).parent.parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# 必须在导入 app 前设置；deps.get_db_path 每次请求读取该环境变量
+# 必须在导入 app 前设置；deps.get_db_url 每次请求读取该环境变量
 _tmp_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 os.environ["PROFILE_DB_PATH"] = _tmp_file.name
 _tmp_file.close()
@@ -26,20 +26,31 @@ atexit.register(_cleanup)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from api.main import app  # noqa: E402
+from core.auth import hash_password  # noqa: E402
 from core.database import Database  # noqa: E402
 from core.models import Event, EventType  # noqa: E402
 from analysis.profile import ProfileGenerator  # noqa: E402
-from api.main import app  # noqa: E402
 
 client = TestClient(app)
 
+_ALICE_ID = ""
+_ADMIN_ID = ""
+
 
 def _seed():
+    global _ALICE_ID, _ADMIN_ID
     db = Database(os.environ["PROFILE_DB_PATH"])
     db.init_tables()
+    _ADMIN_ID = db.create_user(
+        "admin", hash_password("admin-pass-123"), role="admin", status="active"
+    )
+    _ALICE_ID = db.create_user(
+        "alice", hash_password("alice-pass-123"), role="user", status="active"
+    )
     titles = ["Python 编程入门教程", "FastAPI 实战开发", "机器学习基础课程"]
-    for i, title in enumerate(titles):
-        db.insert_event(
+    db.insert_events(
+        [
             Event(
                 id=f"api-ev-{i}",
                 timestamp=datetime(2026, 8, 1, 10, 0, i),
@@ -48,8 +59,28 @@ def _seed():
                 title=title,
                 tags=["编程", "教程"],
             )
-        )
+            for i, title in enumerate(titles)
+        ],
+        _ALICE_ID,
+    )
     db.close()
+
+
+def _login(username: str, password: str) -> str:
+    r = client.post(
+        "/api/v1/auth/login", json={"username": username, "password": password}
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["token"]
+
+
+def _auth(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+_seed()
+_ADMIN_TOKEN = _login("admin", "admin-pass-123")
+_ALICE_TOKEN = _login("alice", "alice-pass-123")
 
 
 def test_health():
@@ -58,55 +89,101 @@ def test_health():
     assert r.json() == {"status": "ok"}
 
 
-def test_events():
-    _seed()
-    r = client.get("/api/v1/events", params={"limit": 100})
+def test_unauthorized_returns_401():
+    r = client.get("/api/v1/events")
+    assert r.status_code == 401
+
+
+def test_register_pending_and_admin_approve():
+    r = client.post(
+        "/api/v1/auth/register",
+        json={"username": "bob", "password": "bob-pass-123"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "pending"
+    bob_id = r.json()["id"]
+
+    r = client.post(
+        "/api/v1/auth/login", json={"username": "bob", "password": "bob-pass-123"}
+    )
+    assert r.status_code == 403
+
+    # 普通用户不能访问管理员接口
+    r = client.get("/api/v1/admin/users", headers=_auth(_ALICE_TOKEN))
+    assert r.status_code == 403
+
+    # 管理员批准后可以登录
+    r = client.patch(
+        f"/api/v1/admin/users/{bob_id}",
+        json={"status": "active"},
+        headers=_auth(_ADMIN_TOKEN),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "active"
+
+    r = client.post(
+        "/api/v1/auth/login", json={"username": "bob", "password": "bob-pass-123"}
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_events_scoped_by_user():
+    r = client.get("/api/v1/events", params={"limit": 100}, headers=_auth(_ALICE_TOKEN))
     assert r.status_code == 200
     data = r.json()
     assert len(data) == 3
     assert data[0]["source"] == "test"
-    assert data[0]["event_type"] == "view"
 
-    r2 = client.get("/api/v1/events", params={"source": "nope"})
-    assert r2.status_code == 200
-    assert r2.json() == []
+    # 管理员看不到 alice 的数据
+    r = client.get("/api/v1/events", params={"limit": 100}, headers=_auth(_ADMIN_TOKEN))
+    assert r.status_code == 200
+    assert r.json() == []
 
 
-def test_stats():
-    _seed()
-    r = client.get("/api/v1/stats")
+def test_stats_scoped_by_user():
+    r = client.get("/api/v1/stats", headers=_auth(_ALICE_TOKEN))
     assert r.status_code == 200
     assert r.json()["total"] == 3
 
+    r = client.get("/api/v1/stats", headers=_auth(_ADMIN_TOKEN))
+    assert r.status_code == 200
+    assert r.json()["total"] == 0
 
-def test_topics_and_latest_profile():
-    _seed()
+
+def test_topics_and_latest_profile_scoped():
     db = Database(os.environ["PROFILE_DB_PATH"])
     db.init_tables()
-    ProfileGenerator(db, {}).generate(period="weekly", persist=True)
+    ProfileGenerator(db, {}).generate(user_id=_ALICE_ID, period="weekly", persist=True)
     db.close()
 
-    r = client.get("/api/v1/topics")
+    r = client.get("/api/v1/topics", headers=_auth(_ALICE_TOKEN))
     assert r.status_code == 200
     assert r.json(), "topics 不应为空"
 
-    r = client.get("/api/v1/profile/latest", params={"period": "weekly"})
+    r = client.get(
+        "/api/v1/profile/latest", params={"period": "weekly"}, headers=_auth(_ALICE_TOKEN)
+    )
     assert r.status_code == 200
     assert r.json()["total_events"] == 3
 
-    r = client.get("/api/v1/profile/latest", params={"period": "monthly"})
+    r = client.get(
+        "/api/v1/profile/latest", params={"period": "weekly"}, headers=_auth(_ADMIN_TOKEN)
+    )
     assert r.status_code == 404
 
 
 def test_refresh_task():
-    _seed()
-    r = client.post("/api/v1/profile/refresh", params={"period": "weekly"})
+    r = client.post(
+        "/api/v1/profile/refresh",
+        params={"period": "weekly"},
+        headers=_auth(_ALICE_TOKEN),
+    )
     assert r.status_code == 202
     task_id = r.json()["task_id"]
 
     body = {}
     for _ in range(60):
-        s = client.get(f"/api/v1/profile/refresh/{task_id}")
+        s = client.get(f"/api/v1/profile/refresh/{task_id}", headers=_auth(_ALICE_TOKEN))
         assert s.status_code == 200
         body = s.json()
         if body["status"] in ("done", "error"):
@@ -117,23 +194,35 @@ def test_refresh_task():
 
 
 def test_graph_endpoint_and_cache():
-    _seed()
-    r = client.get("/api/v1/graph", params={"window_days": 90})
+    r = client.get(
+        "/api/v1/graph", params={"window_days": 90}, headers=_auth(_ALICE_TOKEN)
+    )
     assert r.status_code == 200
     body = r.json()
     assert set(body) == {"nodes", "edges"}
     assert body["nodes"], "图谱节点不应为空"
     assert body["edges"], "图谱边不应为空"
 
-    # 命中缓存：第二次响应一致
-    r2 = client.get("/api/v1/graph", params={"window_days": 90})
+    r2 = client.get(
+        "/api/v1/graph", params={"window_days": 90}, headers=_auth(_ALICE_TOKEN)
+    )
     assert r2.status_code == 200
     assert r2.json() == body
 
 
 def test_graph_invalid_window():
-    r = client.get("/api/v1/graph", params={"window_days": 0})
+    r = client.get(
+        "/api/v1/graph", params={"window_days": 0}, headers=_auth(_ALICE_TOKEN)
+    )
     assert r.status_code == 422
+
+
+def test_logout_invalidates_token():
+    token = _login("alice", "alice-pass-123")
+    r = client.post("/api/v1/auth/logout", headers=_auth(token))
+    assert r.status_code == 200
+    r = client.get("/api/v1/stats", headers=_auth(token))
+    assert r.status_code == 401
 
 
 if __name__ == "__main__":

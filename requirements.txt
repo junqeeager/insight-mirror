@@ -28,3 +28,6 @@ feedparser>=6.0.10
 # API（第二阶段）
 fastapi>=0.110.0
 uvicorn>=0.29.0
+
+# 账号体系
+cryptography>=42.0.0

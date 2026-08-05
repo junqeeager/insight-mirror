@@ -27,6 +27,7 @@ class ProfileGenerator:
 
     def generate(
         self,
+        user_id: str,
         period: str = "weekly",
         since: Optional[datetime] = None,
         persist: bool = True,
@@ -46,7 +47,7 @@ class ProfileGenerator:
             since = self._get_period_start(period)
 
         # 获取时间范围内的事件
-        events = self.db.get_events(since=since, limit=10000)
+        events = self.db.get_events(user_id=user_id, since=since, limit=10000)
 
         # 提取关键词
         keywords = extract_keywords_from_events(events, top_n=20)
@@ -118,14 +119,14 @@ class ProfileGenerator:
         )
 
         if persist:
-            self._persist(profile, events)
+            self._persist(profile, events, user_id)
 
         return profile
 
-    def _persist(self, profile: Profile, events: List[Event]) -> None:
+    def _persist(self, profile: Profile, events: List[Event], user_id: str) -> None:
         """将画像结果写入 topics / event_topics / profiles 表"""
         if not events:
-            self.db.insert_profile(profile)
+            self.db.insert_profile(profile, user_id)
             return
 
         events_by_id = {e.id: e for e in events}
@@ -143,9 +144,11 @@ class ProfileGenerator:
                 topic.frequency = len(matched)
                 topic.first_seen = min(e.timestamp for e in matched)
                 topic.last_seen = max(e.timestamp for e in matched)
-            self.db.insert_topic(topic)
+            self.db.insert_topic(topic, user_id)
             for e in matched:
-                self.db.link_event_topic(e.id, topic.id, relevance=round(topic.weight, 4))
+                self.db.link_event_topic(
+                    e.id, topic.id, user_id, relevance=round(topic.weight, 4)
+                )
 
         # 2. 聚类主题（写入对应 cluster 分类）
         for cluster_id, info in profile.topic_clusters.items():
@@ -165,12 +168,14 @@ class ProfileGenerator:
                     topic.frequency = len(matched)
                     topic.first_seen = min(e.timestamp for e in matched)
                     topic.last_seen = max(e.timestamp for e in matched)
-                self.db.insert_topic(topic)
+                self.db.insert_topic(topic, user_id)
                 for e in matched:
-                    self.db.link_event_topic(e.id, topic.id, relevance=round(base_weight, 4))
+                    self.db.link_event_topic(
+                        e.id, topic.id, user_id, relevance=round(base_weight, 4)
+                    )
 
         # 3. 画像快照
-        self.db.insert_profile(profile)
+        self.db.insert_profile(profile, user_id)
 
     def _get_period_start(self, period: str) -> datetime:
         """获取周期起始时间"""
@@ -185,10 +190,10 @@ class ProfileGenerator:
             return now - timedelta(days=7)
 
     def get_time_range_stats(
-        self, start: datetime, end: datetime
+        self, user_id: str, start: datetime, end: datetime
     ) -> dict:
         """获取指定时间范围的统计"""
-        events = self.db.get_events(since=start, limit=10000)
+        events = self.db.get_events(user_id=user_id, since=start, limit=10000)
         # 过滤 end 之后的
         events = [e for e in events if e.timestamp <= end]
 

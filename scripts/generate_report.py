@@ -40,6 +40,12 @@ def main():
         default="config.yaml",
         help="配置文件路径",
     )
+    parser.add_argument(
+        "--user",
+        type=str,
+        default="admin",
+        help="生成哪个用户的报告（默认 admin）",
+    )
 
     args = parser.parse_args()
 
@@ -53,21 +59,27 @@ def main():
     db = Database(db_url)
     db.init_tables()
 
+    user = db.get_user_by_username(args.user.strip())
+    if not user:
+        logger.error("❌ 用户 %s 不存在", args.user)
+        return 1
+
     # 生成画像
-    logger.info("📊 生成 %s 报告...", args.period)
+    logger.info("📊 生成用户 %s 的 %s 报告...", user["username"], args.period)
     generator = ProfileGenerator(db, config.get("analysis", {}))
-    profile = generator.generate(period=args.period)
+    profile = generator.generate(user_id=user["id"], period=args.period)
 
     # 生成报告
     report_gen = ReportGenerator()
+    output_dir = f"./data/reports/{user['username']}"
 
     if args.format in ["html", "both"]:
-        report_path = report_gen.generate_html(profile)
+        report_path = report_gen.generate_html(profile, output_dir=output_dir)
         logger.info("📄 HTML 报告已生成: %s", report_path)
 
     if args.format in ["text", "both"]:
         text_report = report_gen.generate_summary(profile)
-        text_path = f"./data/reports/{profile.id}_{profile.period}.txt"
+        text_path = f"{output_dir}/{profile.id}_{profile.period}.txt"
         Path(text_path).parent.mkdir(parents=True, exist_ok=True)
         Path(text_path).write_text(text_report, encoding="utf-8")
         logger.info("📄 文本报告已生成: %s", text_path)

@@ -17,7 +17,7 @@ import tempfile
 import os
 
 from core.utils import load_config
-from frontend.auth import require_auth
+from frontend.auth import require_login
 from frontend.data_access import get_events, get_graph
 from frontend.layout import page_header, render_sidebar
 from frontend.theme import apply_theme
@@ -26,8 +26,8 @@ st.set_page_config(page_title="关系视图", page_icon="🕸️", layout="wide"
 
 config = load_config()
 apply_theme()
-require_auth()
-render_sidebar(config)
+user = require_login()
+render_sidebar(config, user)
 page_header("关系视图", "查看兴趣关键词之间的关联与平台分布")
 
 # 时间范围选择
@@ -41,7 +41,7 @@ elif period == "最近 30 天":
 else:
     since = now - timedelta(days=90)
 
-events = get_events(config, since=since, limit=5000)
+events = get_events(config, user, since=since, limit=5000)
 
 if not events:
     st.warning("暂无数据，请先同步数据源。")
@@ -51,7 +51,7 @@ if not events:
 st.subheader("兴趣关联网络")
 
 window_days = {"最近 7 天": 7, "最近 30 天": 30, "最近 90 天": 90}[period]
-graph_data = get_graph(config, window_days=window_days)
+graph_data = get_graph(config, user, window_days=window_days)
 keyword_freq = {n["label"]: n["freq"] for n in graph_data["nodes"]}
 graph_edges = graph_data["edges"]
 

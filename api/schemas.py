@@ -150,3 +150,68 @@ class GraphOut(BaseModel):
 
     nodes: List[GraphNode] = Field(default_factory=list)
     edges: List[GraphEdge] = Field(default_factory=list)
+
+
+# ---------- 账号体系 ----------
+
+
+class RegisterIn(BaseModel):
+    """注册请求"""
+
+    username: str = Field(min_length=3, max_length=32)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class LoginIn(BaseModel):
+    """登录请求"""
+
+    username: str
+    password: str
+
+
+class UserOut(BaseModel):
+    """用户信息响应（不含密码哈希）"""
+
+    id: str
+    username: str
+    role: str
+    status: str
+    created_at: Optional[datetime] = None
+    last_login_at: Optional[datetime] = None
+
+
+class LoginOut(BaseModel):
+    """登录响应"""
+
+    token: str
+    user: UserOut
+
+
+class SourceConfigIn(BaseModel):
+    """保存数据源配置请求"""
+
+    source: str
+    config: Dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class SourceConfigOut(BaseModel):
+    """数据源配置响应（敏感字段脱敏）"""
+
+    source: str
+    enabled: bool
+    config: Dict[str, Any] = Field(default_factory=dict)
+    has_secrets: Dict[str, bool] = Field(default_factory=dict)
+
+
+class SyncIn(BaseModel):
+    """触发同步请求"""
+
+    source: Optional[str] = None
+
+
+class AdminUserPatch(BaseModel):
+    """管理员更新用户请求"""
+
+    status: Optional[str] = None
+    password: Optional[str] = None
