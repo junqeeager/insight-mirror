@@ -578,6 +578,149 @@ def test_youtube_takeout_import_and_validation():
         youtube_router._plugin_for = original
 
 
+def test_youtube_takeout_export_task_lifecycle():
+    """自动导出：一键启动 → 后台任务完成 → 状态可查询且用户隔离。"""
+
+    class FakeTakeoutPlugin:
+        refresh_token = "test-refresh"
+        takeout_max_archive_mb = 200
+        takeout_max_total_mb = 1024
+
+        def _refresh_access_token(self):
+            return "test-access"
+
+        def parse_takeout(self, payload):
+            return [
+                Event(
+                    id=f"youtube-takeout-api-{i}",
+                    timestamp=datetime(2026, 8, 1, 10, 0),
+                    source="youtube",
+                    event_type=EventType.VIEW,
+                    title=entry.get("title", "Watched 测试"),
+                )
+                for i, entry in enumerate(payload)
+            ]
+
+        def cleanup(self):
+            pass
+
+    class FakeTakeoutExporter:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.closed = False
+
+        def create_batch(self):
+            return "batch-api-test"
+
+        def poll_until_ready(self, batch_id, progress=None):
+            if progress:
+                progress("Google 打包完成")
+            return {
+                "status": "COMPLETED",
+                "files": [
+                    {"downloadUrl": "https://takeout.example.com/test.zip"}
+                ],
+            }
+
+        def download_archives(self, data, target_dir=None, progress=None):
+            return []
+
+        def extract_watch_history(self, archive_paths):
+            return [
+                {
+                    "title": "Watched 自动导出测试",
+                    "time": "2026-08-01T10:00:00Z",
+                }
+            ]
+
+        def close(self):
+            self.closed = True
+
+    original_plugin = youtube_router._plugin_for
+    original_exporter = youtube_router.TakeoutExporter
+    youtube_router._plugin_for = (
+        lambda db, user_id, config: FakeTakeoutPlugin()
+    )
+    youtube_router.TakeoutExporter = FakeTakeoutExporter
+    try:
+        r = client.post(
+            "/api/v1/sources/youtube/takeout/export",
+            headers=_auth(_ADMIN_TOKEN),
+        )
+        assert r.status_code == 202, r.text
+        task_id = r.json()["task_id"]
+
+        body = {}
+        for _ in range(50):
+            r = client.get(
+                f"/api/v1/sources/youtube/takeout/export/{task_id}",
+                headers=_auth(_ADMIN_TOKEN),
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            if body["status"] != "running":
+                break
+            time.sleep(0.1)
+        assert body["status"] == "done", body
+        assert body["imported"] == 1
+        assert "已导入 1 条" in body["message"]
+        assert body["batch_id"] == "batch-api-test"
+
+        # 用户隔离：其他用户不能读该任务
+        r = client.get(
+            f"/api/v1/sources/youtube/takeout/export/{task_id}",
+            headers=_auth(_ALICE_TOKEN),
+        )
+        assert r.status_code == 404
+    finally:
+        youtube_router._plugin_for = original_plugin
+        youtube_router.TakeoutExporter = original_exporter
+
+
+def test_youtube_takeout_export_requires_connection():
+    class NoTokenPlugin:
+        refresh_token = ""
+
+    original = youtube_router._plugin_for
+    youtube_router._plugin_for = lambda db, user_id, config: NoTokenPlugin()
+    try:
+        r = client.post(
+            "/api/v1/sources/youtube/takeout/export",
+            headers=_auth(_ALICE_TOKEN),
+        )
+        assert r.status_code == 400, r.text
+        assert "未连接 YouTube" in r.json()["detail"]
+    finally:
+        youtube_router._plugin_for = original
+
+
+def test_youtube_takeout_export_cooldown():
+    """30 分钟冷却：刚结束过的自动导出再次触发返回 409。"""
+    db = Database(os.environ["PROFILE_DB_PATH"])
+    db.create_task("cooldown-task", _ALICE_ID, "takeout_export", {})
+    db.update_task(
+        "cooldown-task",
+        status="done",
+        result={"message": "已导入 0 条观看记录"},
+    )
+    db.close()
+
+    class FakePlugin:
+        refresh_token = "test-refresh"
+
+    original = youtube_router._plugin_for
+    youtube_router._plugin_for = lambda db, user_id, config: FakePlugin()
+    try:
+        r = client.post(
+            "/api/v1/sources/youtube/takeout/export",
+            headers=_auth(_ALICE_TOKEN),
+        )
+        assert r.status_code == 409, r.text
+        assert "分钟内已执行过" in r.json()["detail"]
+    finally:
+        youtube_router._plugin_for = original
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

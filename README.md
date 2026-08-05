@@ -227,6 +227,8 @@ make run-web   # 生产同源：uvicorn api.main:app --host 0.0.0.0 --port 8501
 | `GET` | `/api/v1/sources/youtube/callback` | Google 授权回跳入口（服务端换 token 后跳回设置页） |
 | `POST` | `/api/v1/sources/youtube/token` | 用授权码换取并加密保存 refresh_token |
 | `POST` | `/api/v1/sources/youtube/takeout` | 上传 Takeout watch-history.json 导入观看历史 |
+| `POST` | `/api/v1/sources/youtube/takeout/export` | 后台自动创建 Takeout 导出并导入观看历史 |
+| `GET` | `/api/v1/sources/youtube/takeout/export/{task_id}` | 查询自动导出任务状态与实时消息 |
 | `POST/GET` | `/api/v1/sync` | 触发/查询自己的数据同步任务 |
 | `GET/PATCH` | `/api/v1/admin/users` | 管理员列出/审核/禁用/重置用户 |
 

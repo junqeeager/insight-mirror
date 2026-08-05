@@ -7,11 +7,13 @@ import {
   exportAccountData,
   fetchAdminUsers,
   fetchSources,
+  fetchYouTubeTakeoutExportStatus,
   fetchYouTubeAuthUrl,
   fetchStats,
   fetchSyncStatus,
   patchAdminUser,
   saveSource,
+  startYouTubeTakeoutExport,
   startSync,
   testSource,
   uploadYouTubeTakeout,
@@ -145,6 +147,8 @@ export function SettingsPage() {
   const [deletePassword, setDeletePassword] = useState("");
   const [syncStates, setSyncStates] = useState<Record<string, SyncState>>({});
   const syncTimers = useRef<Record<string, number>>({});
+  const [takeoutState, setTakeoutState] = useState<SyncState | null>(null);
+  const takeoutTimer = useRef<number | null>(null);
 
   useEffect(() => {
     setNotice("");
@@ -305,6 +309,67 @@ export function SettingsPage() {
     [refreshStatsAndSources, clearSyncState],
   );
 
+  const clearTakeoutState = useCallback(() => {
+    if (takeoutTimer.current) {
+      window.clearTimeout(takeoutTimer.current);
+      takeoutTimer.current = null;
+    }
+    setTakeoutState(null);
+  }, []);
+
+  const pollTakeout = useCallback(
+    (taskId: string) => {
+      fetchYouTubeTakeoutExportStatus(taskId)
+        .then((task) => {
+          if (task.status === "running") {
+            setTakeoutState({
+              taskId,
+              phase: "running",
+              message: task.message || "等待 Google 打包导出…",
+            });
+            takeoutTimer.current = window.setTimeout(
+              () => pollTakeout(taskId),
+              2000,
+            );
+            return;
+          }
+          const err = task.error ?? "";
+          if (task.status === "done" && !err) {
+            setTakeoutState({
+              taskId,
+              phase: "done",
+              message: task.message || `已导入 ${task.imported} 条观看记录`,
+            });
+          } else {
+            setTakeoutState({
+              taskId,
+              phase: "error",
+              message: `自动导出失败：${err || "未知错误"}`,
+            });
+          }
+          takeoutTimer.current = window.setTimeout(
+            () => clearTakeoutState(),
+            30000,
+          );
+        })
+        .catch((err) => {
+          const detail =
+            (err as { response?: { data?: { detail?: string } } })?.response
+              ?.data?.detail ?? "";
+          setTakeoutState({
+            taskId,
+            phase: "error",
+            message: `自动导出状态查询失败：${detail || "请稍后重试"}`,
+          });
+          takeoutTimer.current = window.setTimeout(
+            () => clearTakeoutState(),
+            30000,
+          );
+        });
+    },
+    [clearTakeoutState],
+  );
+
   useEffect(() => {
     const status = searchParams.get("youtube");
     const code = searchParams.get("code");
@@ -359,6 +424,7 @@ export function SettingsPage() {
     () => () => {
       Object.values(syncTimers.current).forEach((id) => window.clearTimeout(id));
       syncTimers.current = {};
+      if (takeoutTimer.current) window.clearTimeout(takeoutTimer.current);
     },
     [],
   );
@@ -469,6 +535,30 @@ export function SettingsPage() {
       setError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data
           ?.detail ?? "Takeout 导入失败",
+      );
+    }
+  }
+
+  async function handleTakeoutExport() {
+    setNotice("");
+    setError("");
+    try {
+      const task = await startYouTubeTakeoutExport();
+      setTakeoutState({
+        taskId: task.task_id,
+        phase: "running",
+        message: "已提交自动导出，正在等待 Google 打包…",
+      });
+      pollTakeout(task.task_id);
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response
+        ?.status;
+      const detail = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail;
+      setError(
+        status === 409
+          ? "已有自动导出任务在进行，请稍后再试"
+          : detail ?? "自动导出启动失败",
       );
     }
   }
@@ -711,9 +801,34 @@ export function SettingsPage() {
                         onChange={handleTakeoutFile}
                       />
                     </label>
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={takeoutState?.phase === "running"}
+                      onClick={() => withAuth(handleTakeoutExport)}
+                    >
+                      自动获取观看历史
+                    </button>
+                    {takeoutState && (
+                      <div
+                        className={`sync-status ${
+                          takeoutState.phase === "error"
+                            ? "sync-error"
+                            : takeoutState.phase === "done"
+                              ? "sync-done"
+                              : ""
+                        }`}
+                      >
+                        {takeoutState.phase === "running" && (
+                          <span className="spinner" aria-hidden="true" />
+                        )}
+                        <span>{takeoutState.message}</span>
+                      </div>
+                    )}
                     <p className="muted">
-                      喜欢/订阅在连接后自动同步；完整观看历史需在 Google
-                      Takeout 导出 YouTube 数据并上传 watch-history.json。
+                      喜欢/订阅在连接后自动同步；点击“自动获取观看历史”由后台向
+                      Google Takeout 请求完整观看历史并导入，也可手动上传
+                      watch-history.json。
                     </p>
                   </div>
                 )}

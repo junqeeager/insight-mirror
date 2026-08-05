@@ -1,4 +1,4 @@
-"""YouTube OAuth 授权与 Takeout 观看历史导入 API"""
+"""YouTube OAuth 授权、Takeout 观看历史导入与自动导出 API"""
 
 import json
 import logging
@@ -13,16 +13,31 @@ from api.deps import get_config, get_current_user, get_db
 from api.schemas import (
     YouTubeAuthUrlOut,
     YouTubeTakeoutOut,
+    YouTubeTakeoutExportOut,
+    YouTubeTakeoutExportStatusOut,
     YouTubeTokenIn,
     YouTubeTokenOut,
+)
+from api.tasks import (
+    TaskConflictError,
+    get_task_for_user,
+    open_task_db,
+    start_task,
+    takeout_export_progress,
 )
 from core.auth import decrypt_config, encrypt_config
 from core.database import Database
 from core.plugin_loader import PluginManager
+from plugins.youtube.takeout import (
+    TakeoutExporter,
+    make_temp_dir,
+    remove_temp_dir,
+)
 
 router = APIRouter(prefix="/api/v1/sources/youtube", tags=["youtube"])
 
 OAUTH_TTL_MINUTES = 10
+TAKEOUT_COOLDOWN_MINUTES = 30
 logger = logging.getLogger("api.youtube")
 
 
@@ -176,4 +191,125 @@ async def youtube_takeout(
         "received": len(payload) if isinstance(payload, list) else 0,
         "parsed": len(events),
         "imported": imported,
+    }
+
+
+def _takeout_run(user_id: str, config: dict):
+    """构造自动导出的后台任务执行体（在任务线程中运行）。"""
+
+    def run(progress) -> dict:
+        task_db = open_task_db()
+        plugin = None
+        exporter = None
+        temp_dir = None
+        try:
+            plugin = _plugin_for(task_db, user_id, config)
+            if not plugin.refresh_token:
+                raise RuntimeError("未连接 YouTube，请先连接后再自动导出")
+            progress("正在刷新 Google 授权…")
+            token = plugin._refresh_access_token()
+            exporter = TakeoutExporter(
+                access_token=token,
+                max_archive_mb=plugin.takeout_max_archive_mb,
+                max_total_mb=plugin.takeout_max_total_mb,
+            )
+            progress("正在向 Google Takeout 提交导出请求…")
+            batch_id = exporter.create_batch()
+            progress(
+                f"导出任务已创建（{batch_id}），等待 Google 打包，"
+                "通常需要几分钟…"
+            )
+            batch_data = exporter.poll_until_ready(batch_id, progress)
+            temp_dir = make_temp_dir("takeout-export-")
+            archives = exporter.download_archives(batch_data, temp_dir, progress)
+            progress("正在解压并解析观看历史…")
+            payload = exporter.extract_watch_history(archives)
+            events = plugin.parse_takeout(payload)
+            imported = task_db.insert_events(events, user_id)
+            return {
+                "message": (
+                    f"已导入 {imported} 条观看记录"
+                    f"（识别 {len(events)} 条，共 {len(payload)} 条记录）"
+                ),
+                "received": len(payload),
+                "parsed": len(events),
+                "imported": imported,
+                "batch_id": batch_id,
+            }
+        finally:
+            if exporter is not None:
+                exporter.close()
+            if plugin is not None:
+                plugin.cleanup()
+            if temp_dir is not None:
+                remove_temp_dir(temp_dir)
+            task_db.close()
+
+    return run
+
+
+@router.post(
+    "/takeout/export",
+    response_model=YouTubeTakeoutExportOut,
+    status_code=202,
+)
+def youtube_takeout_export_start(
+    user: dict = Depends(get_current_user),
+    db: Database = Depends(get_db),
+    config: dict = Depends(get_config),
+):
+    """后台自动创建 Takeout 导出并导入观看历史（用户侧一键触发）。"""
+    plugin = _plugin_for(db, user["id"], config)
+    if not plugin.refresh_token:
+        raise HTTPException(
+            status_code=400,
+            detail="未连接 YouTube，请先连接后再自动导出",
+        )
+    last = db.get_last_task(user["id"], "takeout_export")
+    if last and last["status"] != "running":
+        created_at = last.get("created_at")
+        if created_at and datetime.now() - created_at < timedelta(
+            minutes=TAKEOUT_COOLDOWN_MINUTES
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{TAKEOUT_COOLDOWN_MINUTES} 分钟内已执行过自动导出，"
+                    "请稍后再试"
+                ),
+            )
+    try:
+        task_id = start_task(
+            user["id"],
+            "takeout_export",
+            {},
+            _takeout_run(user["id"], config),
+            progress_factory=takeout_export_progress,
+        )
+    except TaskConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"task_id": task_id, "status": "started"}
+
+
+@router.get(
+    "/takeout/export/{task_id}",
+    response_model=YouTubeTakeoutExportStatusOut,
+)
+def youtube_takeout_export_status(
+    task_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """查询自动导出任务状态与实时消息。"""
+    task = get_task_for_user(task_id, user["id"])
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    result = task.get("result") or {}
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "error": task.get("error"),
+        "message": str(result.get("message") or ""),
+        "batch_id": result.get("batch_id"),
+        "imported": int(result.get("imported") or 0),
+        "parsed": int(result.get("parsed") or 0),
     }

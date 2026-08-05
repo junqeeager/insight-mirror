@@ -870,6 +870,18 @@ class Database:
             row = conn.execute(stmt).mappings().first()
         return dict(row) if row else None
 
+    def get_last_task(self, user_id: str, kind: str) -> Optional[dict]:
+        """查询某用户某类型最近一次任务（含已结束任务）。"""
+        stmt = (
+            select(tasks)
+            .where(tasks.c.user_id == user_id, tasks.c.kind == kind)
+            .order_by(tasks.c.created_at.desc())
+            .limit(1)
+        )
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt).mappings().first()
+        return dict(row) if row else None
+
     def cleanup_tasks(self, keep_days: int = 7) -> None:
         """清理指定天数前已结束的任务记录。"""
         cutoff = datetime.now() - timedelta(days=keep_days)

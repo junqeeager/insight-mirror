@@ -17,18 +17,31 @@ class TaskConflictError(Exception):
     """同类任务正在运行。"""
 
 
-def _open_db() -> Database:
+def open_task_db() -> Database:
     db = Database(get_db_url(get_config()))
     ensure_initialized(db)
     return db
+
+
+_open_db = open_task_db  # 兼容既有调用
 
 
 def _new_task_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
-def start_task(user_id: str, kind: str, params: dict, run) -> str:
-    """登记任务并提交线程池；同类 running 任务存在时抛 TaskConflictError。"""
+def start_task(
+    user_id: str,
+    kind: str,
+    params: dict,
+    run,
+    progress_factory=None,
+) -> str:
+    """登记任务并提交线程池；同类 running 任务存在时抛 TaskConflictError。
+
+    progress_factory(task_id) 可返回进度回调，run 在每步更新任务
+    result.message。
+    """
     db = _open_db()
     try:
         existing = db.get_running_task(user_id, kind)
@@ -47,7 +60,8 @@ def start_task(user_id: str, kind: str, params: dict, run) -> str:
     def _runner():
         task_db = _open_db()
         try:
-            result = run()
+            progress = progress_factory(task_id) if progress_factory else None
+            result = run(progress) if progress else run()
             task_db.update_task(task_id, status="done", result=result)
         except Exception as exc:
             task_db.update_task(task_id, status="error", error=str(exc))
@@ -107,6 +121,19 @@ def sync_user_task(user_id: str, source: str = None) -> str:
             db.close()
 
     return start_task(user_id, "sync", {"source": source}, _run)
+
+
+def takeout_export_progress(task_id: str):
+    """返回更新任务 result.message 的进度回调。"""
+
+    def _update(message: str) -> None:
+        db = _open_db()
+        try:
+            db.update_task_progress(task_id, {"message": message})
+        finally:
+            db.close()
+
+    return _update
 
 
 def get_task(task_id: str) -> dict:

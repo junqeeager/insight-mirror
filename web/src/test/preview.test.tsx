@@ -33,6 +33,8 @@ vi.mock("../api/client", async (importOriginal) => {
     fetchYouTubeAuthUrl: vi.fn(),
     exchangeYouTubeToken: vi.fn(),
     uploadYouTubeTakeout: vi.fn(),
+    startYouTubeTakeoutExport: vi.fn(),
+    fetchYouTubeTakeoutExportStatus: vi.fn(),
     refreshProfile: vi.fn(),
     fetchTaskStatus: vi.fn(),
     patchAdminUser: vi.fn(),
@@ -89,6 +91,19 @@ beforeEach(() => {
   vi.mocked(client.exchangeYouTubeToken).mockResolvedValue({
     ok: true,
     message: "YouTube 已连接",
+  });
+  vi.mocked(client.startYouTubeTakeoutExport).mockResolvedValue({
+    task_id: "takeout-task",
+    status: "started",
+  });
+  vi.mocked(client.fetchYouTubeTakeoutExportStatus).mockResolvedValue({
+    task_id: "takeout-task",
+    status: "done",
+    message: "已导入 5 条观看记录",
+    imported: 5,
+    parsed: 5,
+    batch_id: "batch-1",
+    error: null,
   });
   vi.mocked(client.fetchAdminUsers).mockResolvedValue(mockUsers);
   vi.mocked(client.startSync).mockResolvedValue({
@@ -148,6 +163,30 @@ describe("未登录公开预览", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByLabelText("导入观看历史（Takeout JSON）"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "自动获取观看历史" }),
+    ).toBeInTheDocument();
+  });
+
+  it("点击自动获取观看历史后轮询并显示导入结果", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    renderRoute("/settings");
+    const button = await screen.findByRole("button", {
+      name: "自动获取观看历史",
+    });
+    fireEvent.click(button);
+
+    await waitFor(() =>
+      expect(client.startYouTubeTakeoutExport).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() =>
+      expect(client.fetchYouTubeTakeoutExportStatus).toHaveBeenCalledWith(
+        "takeout-task",
+      ),
+    );
+    expect(
+      await screen.findByText("已导入 5 条观看记录"),
     ).toBeInTheDocument();
   });
 

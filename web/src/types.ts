@@ -107,3 +107,18 @@ export interface YouTubeTakeoutResult {
   parsed: number;
   imported: number;
 }
+
+export interface YouTubeTakeoutExportResult {
+  task_id: string;
+  status: string;
+}
+
+export interface YouTubeTakeoutExportStatus {
+  task_id: string;
+  status: string;
+  error?: string | null;
+  message: string;
+  batch_id?: string | null;
+  imported: number;
+  parsed: number;
+}

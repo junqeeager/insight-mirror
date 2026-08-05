@@ -10,6 +10,8 @@ import type {
   User,
   YouTubeAuthUrl,
   YouTubeTakeoutResult,
+  YouTubeTakeoutExportResult,
+  YouTubeTakeoutExportStatus,
   YouTubeTokenResult,
 } from "../types";
 import { readStoredAuthToken } from "../auth/storage";
@@ -172,6 +174,23 @@ export async function uploadYouTubeTakeout(
     "/sources/youtube/takeout",
     form,
     { timeout: 60000 },
+  );
+  return data;
+}
+
+export async function startYouTubeTakeoutExport(): Promise<YouTubeTakeoutExportResult> {
+  const { data } = await api.post<YouTubeTakeoutExportResult>(
+    "/sources/youtube/takeout/export",
+    null,
+  );
+  return data;
+}
+
+export async function fetchYouTubeTakeoutExportStatus(
+  taskId: string,
+): Promise<YouTubeTakeoutExportStatus> {
+  const { data } = await api.get<YouTubeTakeoutExportStatus>(
+    `/sources/youtube/takeout/export/${taskId}`,
   );
   return data;
 }

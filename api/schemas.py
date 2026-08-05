@@ -238,6 +238,25 @@ class YouTubeTakeoutOut(BaseModel):
     imported: int
 
 
+class YouTubeTakeoutExportOut(BaseModel):
+    """YouTube Takeout 自动导出任务创建结果"""
+
+    task_id: str
+    status: str = "started"
+
+
+class YouTubeTakeoutExportStatusOut(BaseModel):
+    """YouTube Takeout 自动导出任务状态"""
+
+    task_id: str
+    status: str
+    error: Optional[str] = None
+    message: str = ""
+    batch_id: Optional[str] = None
+    imported: int = 0
+    parsed: int = 0
+
+
 class AdminUserPatch(BaseModel):
     """管理员更新用户请求"""
 

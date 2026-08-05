@@ -10,6 +10,7 @@ test:
 	$(PYTHON) tests/test_analysis.py
 	$(PYTHON) tests/test_plugins.py
 	$(PYTHON) tests/test_youtube_plugin.py
+	$(PYTHON) tests/test_takeout.py
 	$(PYTHON) tests/test_sync_service.py
 	$(PYTHON) tests/test_secret_guard.py
 	$(PYTHON) tests/test_multiuser.py

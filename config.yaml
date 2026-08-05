@@ -79,6 +79,8 @@ sources:
       client_id: "${YOUTUBE_CLIENT_ID}"
       client_secret: "${YOUTUBE_CLIENT_SECRET}"
       takeout_max_mb: 20
+      takeout_max_archive_mb: 200
+      takeout_max_total_mb: 1024
     sync:
       interval: daily
       max_per_sync: 100

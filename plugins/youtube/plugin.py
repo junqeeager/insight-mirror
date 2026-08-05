@@ -1,8 +1,9 @@
 """YouTube 数据源插件
 
-- OAuth2（youtube.readonly）自动同步“喜欢的视频”与“订阅频道”；
+- OAuth2（youtube.readonly + 基础身份）自动同步“喜欢的视频”与“订阅频道”；
 - Google Takeout 导出的 watch-history.json 手动导入真实观看历史
-  （YouTube Data API v3 不开放第三方读取观看历史）。
+  （YouTube Data API v3 不开放第三方读取观看历史）；
+- 自动向 Google Takeout 请求只含观看历史的导出并导入（见 takeout.py）。
 """
 
 import base64
@@ -19,7 +20,10 @@ from core.plugin_loader import DataSourcePlugin
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 API_BASE = "https://www.googleapis.com/youtube/v3"
-SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
+SCOPE = (
+    "https://www.googleapis.com/auth/youtube.readonly "
+    "openid profile email"
+)
 OAUTH_TTL = timedelta(minutes=10)
 
 
@@ -36,7 +40,7 @@ class Plugin(DataSourcePlugin):
 
     @property
     def version(self) -> str:
-        return "1.0.0"
+        return "1.1.0"
 
     @property
     def icon(self) -> str:
@@ -52,6 +56,8 @@ class Plugin(DataSourcePlugin):
         self.refresh_token = ""
         self.public_url = ""
         self.takeout_max_mb = 20
+        self.takeout_max_archive_mb = 200
+        self.takeout_max_total_mb = 1024
         self.last_error = ""
         self.client: Optional[httpx.Client] = None
 
@@ -65,6 +71,18 @@ class Plugin(DataSourcePlugin):
             self.takeout_max_mb = int(config.get("takeout_max_mb", 20) or 20)
         except (TypeError, ValueError):
             self.takeout_max_mb = 20
+        try:
+            self.takeout_max_archive_mb = int(
+                config.get("takeout_max_archive_mb", 200) or 200
+            )
+        except (TypeError, ValueError):
+            self.takeout_max_archive_mb = 200
+        try:
+            self.takeout_max_total_mb = int(
+                config.get("takeout_max_total_mb", 1024) or 1024
+            )
+        except (TypeError, ValueError):
+            self.takeout_max_total_mb = 1024
         if self.client is None:
             self.client = httpx.Client(timeout=20.0)
 
