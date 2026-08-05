@@ -8,6 +8,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from sqlalchemy import text  # noqa: E402
+from sqlalchemy.exc import IntegrityError  # noqa: E402
 
 from core.database import Database  # noqa: E402
 from scripts.migrate import run_migrations  # noqa: E402
@@ -85,6 +86,69 @@ def test_migrations_idempotent_on_fresh_and_migrated_db():
             assert run_migrations(db=fresh) == []
         finally:
             fresh.close()
+    finally:
+        db.close()
+
+
+def test_migration_002_dedupes_running_tasks_and_creates_index():
+    db = Database(":memory:")
+    try:
+        # 模拟旧库：tasks 表无 idx_tasks_running 索引，且存在重复 running 任务
+        with db.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE tasks ("
+                    "  id VARCHAR PRIMARY KEY,"
+                    "  user_id VARCHAR NOT NULL,"
+                    "  kind VARCHAR NOT NULL,"
+                    "  status VARCHAR NOT NULL,"
+                    "  params JSON,"
+                    "  result JSON,"
+                    "  error TEXT,"
+                    "  created_at DATETIME NOT NULL,"
+                    "  finished_at DATETIME"
+                    ")"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO tasks (id, user_id, kind, status, created_at) VALUES "
+                    "('dup-1', 'u1', 'sync', 'running', '2026-08-01 10:00:00'), "
+                    "('dup-2', 'u1', 'sync', 'running', '2026-08-02 10:00:00')"
+                )
+            )
+
+        applied = run_migrations(db=db)
+        assert "002_task_running_unique" in applied
+
+        with db.engine.connect() as conn:
+            running = [
+                row[0]
+                for row in conn.execute(
+                    text("SELECT id FROM tasks WHERE status = 'running'")
+                )
+            ]
+            idx = conn.execute(
+                text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'index' AND name = 'idx_tasks_running'"
+                )
+            ).first()
+        assert running == ["dup-2"], "应保留最新一条 running 任务"
+        assert idx is not None, "应创建 running 任务部分唯一索引"
+
+        # 索引生效：同一 user_id/kind 再次 running 插入应失败
+        try:
+            with db.engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO tasks (id, user_id, kind, status, created_at) "
+                        "VALUES ('dup-3', 'u1', 'sync', 'running', '2026-08-03 10:00:00')"
+                    )
+                )
+            raise AssertionError("重复 running 任务应被唯一索引拒绝")
+        except IntegrityError:
+            pass
     finally:
         db.close()
 

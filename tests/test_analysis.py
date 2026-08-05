@@ -46,15 +46,44 @@ def test_segment_text_filters_stopwords():
 
 
 def test_activity_streak():
-    base = datetime(2026, 8, 1, 10, 0, 0)
+    today = datetime.now().date()
+    base = datetime(today.year, today.month, today.day, 10, 0, 0)
     events = [
-        _make_event(1, base),
-        _make_event(2, base + timedelta(days=1)),
-        _make_event(3, base + timedelta(days=2)),
+        _make_event(1, base - timedelta(days=2)),
+        _make_event(2, base - timedelta(days=1)),
+        _make_event(3, base),
     ]
     streak = calculate_activity_streak(events)
     assert streak["current_streak"] == 3
     assert streak["longest_streak"] == 3
+    assert streak["active_days"] == 3
+
+
+def test_activity_streak_interrupted():
+    today = datetime.now().date()
+    base = datetime(today.year, today.month, today.day, 10, 0, 0)
+    events = [
+        _make_event(1, base - timedelta(days=3)),
+        _make_event(2, base - timedelta(days=1)),
+        _make_event(3, base),
+    ]
+    streak = calculate_activity_streak(events)
+    assert streak["current_streak"] == 2
+    assert streak["longest_streak"] == 2
+    assert streak["active_days"] == 3
+
+
+def test_activity_streak_from_yesterday():
+    today = datetime.now().date()
+    base = datetime(today.year, today.month, today.day, 10, 0, 0)
+    events = [
+        _make_event(1, base - timedelta(days=4)),
+        _make_event(2, base - timedelta(days=2)),
+        _make_event(3, base - timedelta(days=1)),
+    ]
+    streak = calculate_activity_streak(events)
+    assert streak["current_streak"] == 2  # 昨天 + 前天，更早一天断档
+    assert streak["longest_streak"] == 2
     assert streak["active_days"] == 3
 
 

@@ -3,6 +3,8 @@
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
+from sqlalchemy.exc import IntegrityError
+
 from core.database import Database
 from core.sync_service import sync_user
 from analysis.profile import ProfileGenerator
@@ -33,7 +35,11 @@ def start_task(user_id: str, kind: str, params: dict, run) -> str:
         if existing:
             raise TaskConflictError(f"同类任务正在运行: {existing['id']}")
         task_id = _new_task_id()
-        db.create_task(task_id, user_id, kind, params)
+        try:
+            db.create_task(task_id, user_id, kind, params)
+        except IntegrityError:
+            # 并发请求同时通过检查时，由唯一索引兜底拒绝后写入者
+            raise TaskConflictError("同类任务正在运行")
         db.cleanup_tasks(keep_days=7)
     finally:
         db.close()

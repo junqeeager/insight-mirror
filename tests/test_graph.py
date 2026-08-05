@@ -39,6 +39,20 @@ def test_nodes_and_edges():
     assert ("Python", "编程") in pairs or ("编程", "Python") in pairs
 
 
+def test_cooccurrence_uses_event_local_top5():
+    # 音乐在事件 0 内词频最高（5 次），但全局只在事件 0 出现；
+    # 其他词全局高频（每个 21 次），按全局排序会被挤出 Top5。
+    events = [
+        _event(0, "音乐 音乐 音乐 音乐 音乐 科技 财经 教育 体育 游戏", tags=[]),
+    ]
+    for i in range(1, 21):
+        events.append(_event(i, "科技 财经 教育 体育 游戏", tags=[]))
+
+    graph = build_interest_graph(events)
+    edges = {(e["source"], e["target"]) for e in graph["edges"]}
+    assert any("音乐" in pair for pair in edges), "事件内高频词应进入共现 Top5"
+
+
 def test_filter_thresholds():
     events = [_event(i, "Python 编程 教程") for i in range(5)]
     graph = build_interest_graph(events, min_freq=4, min_co=2)

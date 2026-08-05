@@ -17,14 +17,14 @@ def build_interest_graph(
     Returns:
         {"nodes": [{"id", "label", "freq"}], "edges": [{"source", "target", "weight"}]}
     """
-    event_keywords: List[set] = []
+    event_keywords: List[Counter] = []
     for event in events:
         text = event.title or ""
         if event.description:
             text += " " + event.description
         if event.tags:
             text += " " + " ".join(event.tags)
-        keywords = set(segment_text(text))
+        keywords = Counter(segment_text(text))
         if keywords:
             event_keywords.append(keywords)
 
@@ -34,8 +34,8 @@ def build_interest_graph(
     for keywords in event_keywords:
         for word in keywords:
             keyword_freq[word] += 1
-        # 取该事件内权重最高的 5 个关键词（按全局频率排序）
-        top = sorted(keywords, key=lambda w: keyword_freq[w], reverse=True)[:5]
+        # 取该事件内词频最高的 5 个关键词
+        top = [word for word, _ in keywords.most_common(5)]
         for i, w1 in enumerate(top):
             for w2 in top[i + 1:]:
                 if w1 != w2:
