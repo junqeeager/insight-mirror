@@ -112,17 +112,19 @@ async def security_headers(request: Request, call_next):
 
 @app.middleware("http")
 async def request_logging(request: Request, call_next):
-    """记录请求耗时，便于定位慢接口。"""
+    """记录 API 请求耗时，便于定位慢接口（静态资源不记录）。"""
     start = time.monotonic()
     response = await call_next(request)
-    elapsed_ms = (time.monotonic() - start) * 1000
-    logger.info(
-        "%s %s -> %s (%.1f ms)",
-        request.method,
-        request.url.path,
-        response.status_code,
-        elapsed_ms,
-    )
+    path = request.url.path
+    if path.startswith("/api/") or path == "/health":
+        elapsed_ms = (time.monotonic() - start) * 1000
+        logger.info(
+            "%s %s -> %s (%.1f ms)",
+            request.method,
+            path,
+            response.status_code,
+            elapsed_ms,
+        )
     return response
 
 app.include_router(events.router)
