@@ -1,5 +1,6 @@
 """多用户体系测试：账号、会话、数据隔离、凭据加密与旧库迁移（离线）"""
 
+import os
 import sys
 import tempfile
 from datetime import datetime, timedelta
@@ -15,6 +16,7 @@ from core.auth import (  # noqa: E402
     decrypt_config,
     encrypt_config,
     generate_session_token,
+    get_encryption_key,
     hash_password,
     verify_password,
 )
@@ -51,6 +53,36 @@ def test_password_hash_roundtrip():
     assert verify_password("my-pass-123", encoded)
     assert not verify_password("wrong-pass", encoded)
     assert not verify_password("my-pass-123", "garbage")
+
+
+def test_secret_key_fails_fast_in_production():
+    original_env = os.environ.get("APP_ENV")
+    original_require = os.environ.get("APP_REQUIRE_SECRET_KEY")
+    os.environ.pop("APP_SECRET_KEY", None)
+    try:
+        os.environ["APP_ENV"] = "production"
+        try:
+            get_encryption_key()
+            raise AssertionError("生产环境缺少 APP_SECRET_KEY 时应抛出异常")
+        except RuntimeError:
+            pass
+
+        os.environ["APP_ENV"] = "development"
+        os.environ["APP_REQUIRE_SECRET_KEY"] = "1"
+        try:
+            get_encryption_key()
+            raise AssertionError("显式要求密钥时缺少 APP_SECRET_KEY 应抛出异常")
+        except RuntimeError:
+            pass
+    finally:
+        if original_env is None:
+            os.environ.pop("APP_ENV", None)
+        else:
+            os.environ["APP_ENV"] = original_env
+        if original_require is None:
+            os.environ.pop("APP_REQUIRE_SECRET_KEY", None)
+        else:
+            os.environ["APP_REQUIRE_SECRET_KEY"] = original_require
 
 
 def test_user_crud():

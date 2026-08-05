@@ -22,6 +22,16 @@ def get_encryption_key() -> bytes:
     """从 APP_SECRET_KEY 派生 Fernet 兼容的 32 字节 key。"""
     secret = os.environ.get("APP_SECRET_KEY", "")
     if not secret:
+        env = os.environ.get("APP_ENV", "").lower()
+        require = os.environ.get("APP_REQUIRE_SECRET_KEY", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if env == "production" or require:
+            raise RuntimeError(
+                "APP_SECRET_KEY 未配置；生产环境必须设置该密钥（可用 openssl rand -hex 32 生成）"
+            )
         logger.warning("未设置 APP_SECRET_KEY，使用开发用兜底密钥（生产环境请配置）")
         secret = _FALLBACK_SECRET
     digest = hashlib.sha256(secret.encode("utf-8")).digest()

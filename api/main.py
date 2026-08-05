@@ -1,6 +1,8 @@
 """FastAPI 应用入口"""
 
 import logging
+import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,6 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from api.deps import ensure_initialized, get_config, get_db_url
 from api.routers import (
     admin,
     auth,
@@ -21,6 +24,7 @@ from api.routers import (
     sync,
     topics,
 )
+from core.database import Database
 
 logger = logging.getLogger("api")
 
@@ -51,7 +55,19 @@ class SPAStaticFiles(StaticFiles):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动时预热 jieba，避免首个请求的冷启动延迟"""
+    """启动时建表、校验密钥并预热 jieba。"""
+    config = get_config()
+    if config.get("security", {}).get("require_secret_key") and not os.environ.get(
+        "APP_SECRET_KEY"
+    ):
+        raise RuntimeError(
+            "APP_SECRET_KEY 未配置；生产环境必须设置该密钥（可用 openssl rand -hex 32 生成）"
+        )
+    db = Database(get_db_url(config))
+    try:
+        ensure_initialized(db)
+    finally:
+        db.close()
     try:
         from analysis.keywords import segment_text
         segment_text("预热")
@@ -67,13 +83,45 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 开发期放开跨域，便于浏览器直连与前端联调
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_allowed_origins = get_config().get("security", {}).get("allowed_origins") or []
+if _allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """补充基础安全响应头。"""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; script-src 'self'",
+    )
+    return response
+
+
+@app.middleware("http")
+async def request_logging(request: Request, call_next):
+    """记录请求耗时，便于定位慢接口。"""
+    start = time.monotonic()
+    response = await call_next(request)
+    elapsed_ms = (time.monotonic() - start) * 1000
+    logger.info(
+        "%s %s -> %s (%.1f ms)",
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed_ms,
+    )
+    return response
 
 app.include_router(events.router)
 app.include_router(topics.router)

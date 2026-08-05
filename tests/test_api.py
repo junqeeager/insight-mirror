@@ -241,6 +241,30 @@ def test_logout_invalidates_token():
     assert r.status_code == 401
 
 
+def test_login_rate_limit_returns_429():
+    for _ in range(5):
+        r = client.post(
+            "/api/v1/auth/login",
+            json={"username": "ratelimit-user", "password": "wrong-pass-123"},
+        )
+        assert r.status_code == 401
+    r = client.post(
+        "/api/v1/auth/login",
+        json={"username": "ratelimit-user", "password": "wrong-pass-123"},
+    )
+    assert r.status_code == 429
+    assert "过于频繁" in r.json()["detail"]
+
+
+def test_security_headers_and_no_wildcard_cors():
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.headers.get("x-content-type-options") == "nosniff"
+    assert r.headers.get("x-frame-options") == "DENY"
+    assert r.headers.get("content-security-policy")
+    assert "access-control-allow-origin" not in r.headers
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

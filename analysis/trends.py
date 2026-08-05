@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Tuple
 from collections import defaultdict
 
+from analysis.keywords import segment_text
 from core.models import Event
 
 
@@ -35,6 +36,13 @@ def analyze_type_distribution(events: List[Event]) -> Dict[str, int]:
     for event in events:
         distribution[event.event_type.value] += 1
     return dict(distribution)
+
+
+def _event_terms(event: Event) -> List[str]:
+    """取事件参与趋势统计的词：优先 tags，缺失时用标题分词 top3 兜底。"""
+    if event.tags:
+        return event.tags
+    return segment_text(event.title or "")[:3]
 
 
 def analyze_topic_trends(
@@ -112,7 +120,7 @@ def detect_emerging_topics(
     earlier_tags = defaultdict(int)
 
     for event in events:
-        for tag in event.tags:
+        for tag in _event_terms(event):
             if event.timestamp >= recent_cutoff:
                 recent_tags[tag] += 1
             elif event.timestamp >= earlier_cutoff:
@@ -157,7 +165,7 @@ def detect_declining_topics(
     earlier_tags = defaultdict(int)
 
     for event in events:
-        for tag in event.tags:
+        for tag in _event_terms(event):
             if event.timestamp >= recent_cutoff:
                 recent_tags[tag] += 1
             elif event.timestamp >= earlier_cutoff:

@@ -72,6 +72,38 @@ def test_emerging_and_declining():
     assert "oldtopic" in declining
 
 
+def test_emerging_and_declining_fall_back_to_title_when_no_tags():
+    now = datetime(2026, 8, 4, 12, 0, 0)
+    recent = [
+        Event(
+            id=f"r-{i}",
+            timestamp=now - timedelta(hours=1),
+            source="browser_history",
+            event_type=EventType.VIEW,
+            title=f"量子计算 入门 第{i}讲",
+        )
+        for i in range(3)
+    ]
+    earlier = [
+        Event(
+            id=f"o-{i}",
+            timestamp=now - timedelta(days=20),
+            source="browser_history",
+            event_type=EventType.VIEW,
+            title="旧话题 归档 笔记",
+        )
+        for i in range(3)
+    ]
+    emerging = detect_emerging_topics(
+        recent + earlier, recent_days=7, earlier_days=30
+    )
+    declining = detect_declining_topics(
+        recent + earlier, recent_days=7, earlier_days=30
+    )
+    assert "量子" in emerging
+    assert "话题" in declining
+
+
 def test_profile_generation_persists():
     db = Database(":memory:")
     db.init_tables()

@@ -3,10 +3,11 @@
 import re
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
-from api.deps import get_current_user, get_db
+from api.deps import get_config, get_current_user, get_db
 from api.schemas import LoginIn, LoginOut, RegisterIn, UserOut
+from api.security import get_login_limiter
 from core.auth import generate_session_token, hash_password, hash_token, verify_password
 from core.database import Database
 
@@ -40,13 +41,28 @@ def register(body: RegisterIn, db: Database = Depends(get_db)):
 
 
 @router.post("/login", response_model=LoginOut)
-def login(body: LoginIn, db: Database = Depends(get_db)):
+def login(
+    body: LoginIn,
+    request: Request,
+    db: Database = Depends(get_db),
+    config: dict = Depends(get_config),
+):
     """登录并签发 30 天有效的会话 token。"""
+    client_ip = request.client.host if request.client else "unknown"
+    limiter = get_login_limiter(config)
+    if limiter.is_limited(body.username.strip(), client_ip):
+        raise HTTPException(status_code=429, detail="尝试过于频繁，请稍后再试")
+
     user = db.get_user_by_username(body.username.strip())
     if not user or not verify_password(body.password, user["password_hash"]):
+        limiter.record_failure(body.username.strip(), client_ip)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     if user["status"] != "active":
+        limiter.record_failure(body.username.strip(), client_ip)
         raise HTTPException(status_code=403, detail="账号未启用，请联系管理员")
+
+    limiter.clear(body.username.strip(), client_ip)
+    db.delete_expired_sessions()
     raw_token, token_hash = generate_session_token()
     db.create_session(token_hash, user["id"], datetime.now() + timedelta(days=30))
     db.touch_last_login(user["id"])
@@ -72,5 +88,7 @@ def logout(
 ):
     """登出并删除当前会话。"""
     if authorization.startswith("Bearer "):
-        db.delete_session(hash_token(authorization[len("Bearer "):].strip()))
+        token_hash = hash_token(authorization[len("Bearer "):].strip())
+        db.delete_session(token_hash)
+        db.delete_expired_sessions()
     return {"ok": True}
