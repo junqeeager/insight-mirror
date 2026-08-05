@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from core.models import Event, Profile, Topic
 from core.database import Database
@@ -124,18 +124,20 @@ class ProfileGenerator:
         return profile
 
     def _persist(self, profile: Profile, events: List[Event], user_id: str) -> None:
-        """将画像结果写入 topics / event_topics / profiles 表"""
+        """将画像结果写入 topics / event_topics / profiles 表（批量单事务）"""
         if not events:
             self.db.insert_profile(profile, user_id)
             return
 
-        events_by_id = {e.id: e for e in events}
         total = max(len(events), 1)
 
         def contains(event: Event, word: str) -> bool:
             text = " ".join(filter(None, [event.title, event.description]))
             text += " " + " ".join(event.tags)
             return word.lower() in text.lower()
+
+        topic_rows: List[Topic] = []
+        links: List[Tuple[str, str, float]] = []
 
         # 1. Top 关键词主题
         for topic in profile.top_topics:
@@ -144,11 +146,9 @@ class ProfileGenerator:
                 topic.frequency = len(matched)
                 topic.first_seen = min(e.timestamp for e in matched)
                 topic.last_seen = max(e.timestamp for e in matched)
-            self.db.insert_topic(topic, user_id)
+            topic_rows.append(topic)
             for e in matched:
-                self.db.link_event_topic(
-                    e.id, topic.id, user_id, relevance=round(topic.weight, 4)
-                )
+                links.append((e.id, topic.id, round(topic.weight, 4)))
 
         # 2. 聚类主题（写入对应 cluster 分类）
         for cluster_id, info in profile.topic_clusters.items():
@@ -168,13 +168,13 @@ class ProfileGenerator:
                     topic.frequency = len(matched)
                     topic.first_seen = min(e.timestamp for e in matched)
                     topic.last_seen = max(e.timestamp for e in matched)
-                self.db.insert_topic(topic, user_id)
+                topic_rows.append(topic)
                 for e in matched:
-                    self.db.link_event_topic(
-                        e.id, topic.id, user_id, relevance=round(base_weight, 4)
-                    )
+                    links.append((e.id, topic.id, round(base_weight, 4)))
 
-        # 3. 画像快照
+        # 3. 批量写入主题与关联，再保存画像快照
+        self.db.upsert_topics(topic_rows, user_id)
+        self.db.link_event_topics(links, user_id)
         self.db.insert_profile(profile, user_id)
 
     def _get_period_start(self, period: str) -> datetime:
@@ -188,23 +188,3 @@ class ProfileGenerator:
             return now - timedelta(days=365)
         else:
             return now - timedelta(days=7)
-
-    def get_time_range_stats(
-        self, user_id: str, start: datetime, end: datetime
-    ) -> dict:
-        """获取指定时间范围的统计"""
-        events = self.db.get_events(user_id=user_id, since=start, limit=10000)
-        # 过滤 end 之后的
-        events = [e for e in events if e.timestamp <= end]
-
-        source_dist = analyze_source_distribution(events)
-        type_dist = analyze_type_distribution(events)
-        streak = calculate_activity_streak(events)
-
-        return {
-            "total_events": len(events),
-            "source_distribution": source_dist,
-            "type_distribution": type_dist,
-            "streak": streak,
-            "total_duration": sum(e.duration for e in events if e.duration),
-        }

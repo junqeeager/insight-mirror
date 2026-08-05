@@ -11,6 +11,7 @@ if project_root not in sys.path:
 
 from sqlalchemy import text  # noqa: E402
 from sqlalchemy.dialects import postgresql  # noqa: E402
+from sqlalchemy.exc import IntegrityError  # noqa: E402
 
 from core.database import Database, dialect_insert, events, metadata  # noqa: E402
 from core.models import Depth, Event, EventType, Profile, Topic  # noqa: E402
@@ -183,6 +184,30 @@ def test_topic_upsert_and_query():
         db.close()
 
 
+def test_upsert_topics_batch():
+    db = _mem_db()
+    try:
+        uid = _new_user(db)
+        db.upsert_topics(
+            [
+                Topic(id="t1", name="Python", category="general", frequency=5, weight=1.0),
+                Topic(id="t2", name="FastAPI", category="general", frequency=2, weight=0.5),
+            ],
+            uid,
+        )
+        db.upsert_topics(
+            [Topic(id="t1", name="Python", category="general", frequency=9, weight=3.0)],
+            uid,
+        )
+        rows = db.get_topics(uid)
+        assert len(rows) == 2
+        t1 = next(t for t in rows if t.id == "t1")
+        assert t1.frequency == 9
+        assert t1.weight == 3.0
+    finally:
+        db.close()
+
+
 def test_event_topic_link_upsert():
     db = _mem_db()
     try:
@@ -195,6 +220,21 @@ def test_event_topic_link_upsert():
                 {"uid": uid},
             ).mappings().one()
         assert row["relevance"] == 0.9
+    finally:
+        db.close()
+
+
+def test_link_event_topics_batch():
+    db = _mem_db()
+    try:
+        uid = _new_user(db)
+        db.link_event_topics([("e1", "t1", 0.5), ("e2", "t1", 0.8)], uid)
+        db.link_event_topics([("e1", "t1", 0.9)], uid)
+        with db.engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT event_id, relevance FROM event_topics ORDER BY event_id")
+            ).all()
+        assert [(r[0], r[1]) for r in rows] == [("e1", 0.9), ("e2", 0.8)]
     finally:
         db.close()
 
@@ -311,6 +351,29 @@ def test_live_postgres_roundtrip():
         db.insert_topic(topic, uid)
         assert db.get_topics(uid)[0].name == "Python"
         db.link_event_topic(event.id, topic.id, uid, relevance=1.0)
+
+        batch = [_make_event(i + 10, base + timedelta(hours=i)) for i in range(3)]
+        assert db.insert_events(batch, uid) == 3
+        assert db.insert_events(batch[:1], uid) == 0
+        db.upsert_topics(
+            [
+                Topic(id="t2", name="FastAPI", category="general", frequency=2, weight=0.5),
+                Topic(id="t3", name="SQL", category="general", frequency=1, weight=0.2),
+            ],
+            uid,
+        )
+        db.link_event_topics([("ev-10", "t2", 0.6), ("ev-11", "t2", 0.7)], uid)
+        assert db.get_event_count(uid) == 4
+
+        # running 任务部分唯一索引在 PostgreSQL 上也应生效
+        db.create_task("t-pg-1", uid, "sync", {})
+        try:
+            db.create_task("t-pg-2", uid, "sync", {})
+            raise AssertionError("PostgreSQL 上重复 running 任务应被拒绝")
+        except IntegrityError:
+            pass
+        db.update_task("t-pg-1", status="done")
+        db.create_task("t-pg-3", uid, "sync", {})
     finally:
         metadata.drop_all(db.engine)
         db.close()
@@ -347,6 +410,24 @@ def test_task_crud_running_conflict_and_cleanup():
         db.cleanup_tasks(keep_days=7)
         assert db.get_task(old_task) is None
         assert db.get_task("t-1") is not None
+    finally:
+        db.close()
+
+
+def test_task_running_unique_index():
+    db = _mem_db()
+    try:
+        uid = _new_user(db)
+        db.create_task("t-1", uid, "profile_refresh", {"period": "weekly"})
+        try:
+            db.create_task("t-2", uid, "profile_refresh", {"period": "weekly"})
+            raise AssertionError("第二次 running 任务应触发唯一索引冲突")
+        except IntegrityError:
+            pass
+
+        db.update_task("t-1", status="done", result={"profile_id": "p-1"})
+        db.create_task("t-3", uid, "profile_refresh", {"period": "weekly"})
+        assert db.get_task("t-3")["status"] == "running"
     finally:
         db.close()
 

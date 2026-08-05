@@ -5,7 +5,7 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from sqlalchemy import (
     JSON,
@@ -26,6 +26,7 @@ from sqlalchemy import (
     event,
     func,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -165,6 +166,14 @@ tasks = Table(
     Column("created_at", DateTime, default=datetime.now),
     Column("finished_at", DateTime),
     Index("idx_tasks_user", "user_id", "kind", "status"),
+    Index(
+        "idx_tasks_running",
+        "user_id",
+        "kind",
+        unique=True,
+        sqlite_where=text("status = 'running'"),
+        postgresql_where=text("status = 'running'"),
+    ),
 )
 
 schema_migrations = Table(
@@ -287,16 +296,21 @@ class Database:
         return row is not None
 
     def insert_events(self, events_: List[Event], user_id: str) -> int:
-        """批量插入事件，返回实际插入数量（单事务）。"""
+        """批量插入事件，返回实际插入数量（单事务，逐条 RETURNING 计数）。"""
         if not events_:
             return 0
-        stmt = dialect_insert(events, self.dialect).on_conflict_do_nothing()
+        stmt = (
+            dialect_insert(events, self.dialect)
+            .on_conflict_do_nothing()
+            .returning(events.c.id)
+        )
         rows = [{**self._event_row(event), "user_id": user_id} for event in events_]
+        inserted = 0
         with self.engine.begin() as conn:
-            before = conn.execute(select(func.count()).select_from(events)).scalar_one()
-            conn.execute(stmt, rows)
-            after = conn.execute(select(func.count()).select_from(events)).scalar_one()
-        return after - before
+            for row in rows:
+                if conn.execute(stmt, row).first() is not None:
+                    inserted += 1
+        return inserted
 
     def get_events(
         self,
@@ -425,6 +439,40 @@ class Database:
         with self.engine.begin() as conn:
             conn.execute(stmt)
 
+    def upsert_topics(self, topics_: List[Topic], user_id: str) -> None:
+        """批量插入或整体更新主题（单事务）。"""
+        if not topics_:
+            return
+        stmt = dialect_insert(topics, self.dialect)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[topics.c.id, topics.c.user_id],
+            set_={
+                "name": stmt.excluded.name,
+                "category": stmt.excluded.category,
+                "frequency": stmt.excluded.frequency,
+                "weight": stmt.excluded.weight,
+                "first_seen": stmt.excluded.first_seen,
+                "last_seen": stmt.excluded.last_seen,
+                "related_topics": stmt.excluded.related_topics,
+            },
+        )
+        rows = [
+            {
+                "id": topic.id,
+                "user_id": user_id,
+                "name": topic.name,
+                "category": topic.category,
+                "frequency": topic.frequency,
+                "weight": topic.weight,
+                "first_seen": topic.first_seen,
+                "last_seen": topic.last_seen,
+                "related_topics": topic.related_topics,
+            }
+            for topic in topics_
+        ]
+        with self.engine.begin() as conn:
+            conn.execute(stmt, rows)
+
     def link_event_topic(
         self, event_id: str, topic_id: str, user_id: str, relevance: float = 1.0
     ):
@@ -445,6 +493,33 @@ class Database:
         )
         with self.engine.begin() as conn:
             conn.execute(stmt)
+
+    def link_event_topics(
+        self, links: List[Tuple[str, str, float]], user_id: str
+    ) -> None:
+        """批量建立事件与主题的关联（存在则更新 relevance，单事务）。"""
+        if not links:
+            return
+        stmt = dialect_insert(event_topics, self.dialect)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[
+                event_topics.c.event_id,
+                event_topics.c.topic_id,
+                event_topics.c.user_id,
+            ],
+            set_={"relevance": stmt.excluded.relevance},
+        )
+        rows = [
+            {
+                "event_id": event_id,
+                "topic_id": topic_id,
+                "user_id": user_id,
+                "relevance": relevance,
+            }
+            for event_id, topic_id, relevance in links
+        ]
+        with self.engine.begin() as conn:
+            conn.execute(stmt, rows)
 
     def insert_profile(self, profile: Profile, user_id: str):
         """保存画像快照（存在则整体覆盖）。"""
