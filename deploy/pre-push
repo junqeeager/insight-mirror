@@ -20,18 +20,18 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         continue
     fi
 
-    # 新分支（远端无对应提交）时扫描全部文件；否则只扫描本次推送变化的文件
+    # 新分支（远端无对应提交）时扫描全部文件；否则只扫描本次推送变化的文件。
+    # 关闭 core.quotePath 并用 NUL 分隔，避免中文/特殊字符文件名被转义后跳过扫描。
     if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
-        files="$(git ls-tree -r --name-only "$local_sha")"
+        mapfile -d '' -t file_list < <(git -c core.quotePath=false ls-tree -r --name-only -z "$local_sha")
     else
-        files="$(git diff --name-only --diff-filter=ACMRT "$remote_sha".."$local_sha")"
+        mapfile -d '' -t file_list < <(git -c core.quotePath=false diff --name-only --diff-filter=ACMRT -z "$remote_sha".."$local_sha")
     fi
 
-    if [ -z "$files" ]; then
+    if [ "${#file_list[@]}" -eq 0 ]; then
         continue
     fi
 
-    mapfile -t file_list <<< "$files"
     if ! python3 "$scanner" --rev "$local_sha" "${file_list[@]}"; then
         echo "[secret-guard] 已阻止推送到 $remote_ref：请移除上述疑似密钥后重新提交/推送。" >&2
         blocked=1

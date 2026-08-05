@@ -192,6 +192,33 @@ def test_pre_push_hook_blocks_and_allows():
         assert proc.returncode != 0, proc.stdout
         assert "secret-guard" in proc.stderr
 
+        # 非 ASCII 文件名也必须被扫描，防止路径转义绕过
+        unicode_file = src / "秘钥.txt"
+        unicode_file.write_text("APP_PASSWORD=my-secret-123\n", encoding="utf-8")
+        _git(src, "add", "秘钥.txt")
+        _git(src, "commit", "-q", "-m", "bad-unicode")
+        proc = subprocess.run(
+            ["git", "push", str(remote), "main"],
+            cwd=src,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode != 0, proc.stdout
+        assert "secret-guard" in proc.stderr
+
+        # 清除全部问题文件后推送恢复
+        (src / ".env").unlink()
+        unicode_file.unlink()
+        _git(src, "add", "-A")
+        _git(src, "commit", "-q", "-m", "fix")
+        proc = subprocess.run(
+            ["git", "push", str(remote), "main"],
+            cwd=src,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+
 
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
