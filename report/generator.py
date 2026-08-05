@@ -35,23 +35,7 @@ class ReportGenerator:
         """
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
-
-        # 选择模板
-        template_name = f"{profile.period}.html"
-        if not (self.templates_dir / template_name).exists():
-            template_name = "weekly.html"
-
-        template = self.env.get_template(template_name)
-
-        # 准备模板数据
-        data = {
-            "profile": profile,
-            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "format_duration": format_duration,
-        }
-
-        # 渲染
-        html_content = template.render(**data)
+        html_content = self.render_html(profile)
 
         # 写入文件
         filename = f"{profile.id}_{profile.period}.html"
@@ -59,6 +43,20 @@ class ReportGenerator:
         filepath.write_text(html_content, encoding="utf-8")
 
         return str(filepath)
+
+    def render_html(self, profile: Profile) -> str:
+        """渲染 HTML 报告内容（不落盘）。"""
+        template_name = f"{profile.period}.html"
+        if not (self.templates_dir / template_name).exists():
+            template_name = "weekly.html"
+
+        template = self.env.get_template(template_name)
+        data = {
+            "profile": profile,
+            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "format_duration": format_duration,
+        }
+        return template.render(**data)
 
     def generate_summary(self, profile: Profile) -> str:
         """生成纯文本摘要"""

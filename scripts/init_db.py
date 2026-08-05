@@ -11,6 +11,7 @@ if project_root not in sys.path:
 
 from core.database import Database, database_url
 from core.utils import load_config, setup_logging
+from scripts.migrate import run_migrations
 
 logger = logging.getLogger("init_db")
 
@@ -27,6 +28,9 @@ def main():
     # 创建数据库
     db = Database(db_url)
     db.init_tables()
+    applied = run_migrations(db=db)
+    if applied:
+        logger.info("🔁 已应用迁移: %s", ", ".join(applied))
 
     logger.info("✅ 数据库已初始化: %s", db_url)
     logger.info("👤 当前用户数: %d", len(db.list_users()))

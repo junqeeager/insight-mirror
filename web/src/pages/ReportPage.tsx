@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchLatestProfile,
+  fetchReport,
   fetchTaskStatus,
   refreshProfile,
 } from "../api/client";
@@ -14,7 +15,11 @@ import {
   SourcePill,
 } from "../components/ui";
 import { mockProfile } from "../data/mock";
-import { downloadText, formatDateTime, formatDuration } from "../lib/format";
+import {
+  downloadBlob,
+  formatDateTime,
+  formatDuration,
+} from "../lib/format";
 import type { Profile } from "../types";
 
 const PERIODS = ["weekly", "monthly", "yearly"];
@@ -110,22 +115,30 @@ export function ReportPage() {
     requireAuth(() => void generate());
   }
 
-  function exportReport() {
-    if (!profile) return;
-    const text = JSON.stringify(
-      { ...profile, exported_at: new Date().toISOString() },
-      null,
-      2,
-    );
-    downloadText(
-      `profile-${profile.period}-${new Date().toISOString().slice(0, 10)}.json`,
-      text,
-      "application/json;charset=utf-8",
-    );
+  async function downloadReport(format: "html" | "txt") {
+    setGenerating(true);
+    setError("");
+    setNotice("");
+    try {
+      const blob = await fetchReport(period, format);
+      const ext = format === "html" ? "html" : "txt";
+      downloadBlob(
+        blob,
+        `profile-${period}-${new Date().toISOString().slice(0, 10)}.${ext}`,
+      );
+      setNotice(`${format.toUpperCase()} 报告已下载`);
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? "报告下载失败",
+      );
+    } finally {
+      setGenerating(false);
+    }
   }
 
-  function exportWithAuth() {
-    requireAuth(() => exportReport());
+  function exportWithAuth(format: "html" | "txt") {
+    requireAuth(() => void downloadReport(format));
   }
 
   const hasProfile = Boolean(profile);
@@ -176,9 +189,24 @@ export function ReportPage() {
           {generating ? "生成中…" : "生成报告"}
         </button>
         {hasProfile && (
-          <button type="button" className="button" onClick={exportWithAuth}>
-            导出报告
-          </button>
+          <>
+            <button
+              type="button"
+              className="button"
+              disabled={generating}
+              onClick={() => exportWithAuth("html")}
+            >
+              导出 HTML
+            </button>
+            <button
+              type="button"
+              className="button"
+              disabled={generating}
+              onClick={() => exportWithAuth("txt")}
+            >
+              导出 TXT
+            </button>
+          </>
         )}
       </div>
 

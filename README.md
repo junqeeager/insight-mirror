@@ -53,7 +53,7 @@ analysis/（关键词提取 / 主题聚类 / 趋势 / 洞察）
 report/（HTML 周报 / 月报 / 年报）
 ```
 
-React SPA 未登录时可浏览全站示例数据预览；登录后通过 FastAPI 读取当前用户的真实数据。旧 Streamlit 前端保留在 `frontend/` 作为回退。
+React SPA 未登录时可浏览全站示例数据预览；登录后通过 FastAPI 读取当前用户的真实数据。
 
 ## 🚀 快速开始
 
@@ -182,23 +182,17 @@ personal-profile/
 │   ├── src/                 # 页面、Auth、API 客户端、mock 预览数据
 │   └── dist/                # 构建产物（生产由 FastAPI 托管）
 │
-├── frontend/                # 旧 Streamlit 前端（回退保留）
-│   ├── app.py              # 主入口
-│   ├── auth.py             # 登录/注册鉴权
-│   ├── theme.py            # Astryx 主题注入（纯 CSS）
-│   ├── layout.py           # 共享侧边栏与页头
-│   ├── assets/             # Astryx neutral 预编译 CSS（固定版本）
-│   └── pages/              # 页面
-│
 ├── scripts/                 # 工具脚本
 │   ├── init_db.py          # 初始化数据库
 │   ├── sync.py             # 数据同步
 │   ├── generate_report.py  # 生成报告
+│   ├── migrate.py          # schema 迁移
 │   └── migrate_db.py       # SQLite ↔ PostgreSQL 数据迁移
 │
 ├── api/                     # FastAPI 服务层
-│   ├── main.py             # 应用入口（含 jieba 预热、SPA 托管与全局异常处理）
-│   └── routers/            # /events /topics /profile /stats /graph /auth /sources /sync /admin
+│   ├── main.py             # 应用入口（建表、安全头、jieba 预热、SPA 托管与全局异常处理）
+│   ├── tasks.py            # DB 持久化的后台任务（画像/同步）
+│   └── routers/            # /events /topics /profile /stats /graph /auth /sources /sync /admin /report /account
 │
 └── docs/                    # 设计文档（含 FastAPI 迁移规划）
 ```
@@ -219,10 +213,14 @@ make run-web   # 生产同源：uvicorn api.main:app --host 0.0.0.0 --port 8501
 | `GET` | `/api/v1/profile/latest` | 最近画像快照 |
 | `POST` | `/api/v1/profile/refresh` | 后台重建画像 |
 | `GET` | `/api/v1/profile/refresh/{task_id}` | 查询画像重建任务状态 |
+| `GET` | `/api/v1/report?period&format` | 下载最近画像报告（html/txt/json） |
 | `GET` | `/api/v1/graph` | 兴趣共现图（后端预计算，5 分钟缓存） |
 | `POST` | `/api/v1/auth/register` | 注册（默认待管理员审核） |
 | `POST` | `/api/v1/auth/login` | 登录并签发会话 token |
 | `POST` | `/api/v1/auth/logout` | 登出并使 token 失效 |
+| `POST` | `/api/v1/account/password` | 修改自己的密码（所有会话失效） |
+| `POST` | `/api/v1/account/export` | 服务端导出自己的全部事件（csv/json） |
+| `DELETE` | `/api/v1/account` | 注销账号并永久删除数据 |
 | `GET/PUT` | `/api/v1/sources` | 查看/保存自己的数据源配置 |
 | `POST` | `/api/v1/sources/{source}/test` | 测试自己的数据源连接 |
 | `POST/GET` | `/api/v1/sync` | 触发/查询自己的数据同步任务 |
@@ -230,12 +228,12 @@ make run-web   # 生产同源：uvicorn api.main:app --host 0.0.0.0 --port 8501
 
 除 `/health` 和注册/登录外，所有 API 都需要 `Authorization: Bearer <token>`，并按登录用户隔离数据。
 
-React SPA 通过 `web/src/api/client.ts` 调用同源 `/api/v1/*`；未登录一律使用 `web/src/data/mock.ts` 示例数据，登录后按 token 读取当前用户真实数据。旧 Streamlit 通过 `frontend/data_access.py` 优先调用 API 并回退直连 SQLite。
+React SPA 通过 `web/src/api/client.ts` 调用同源 `/api/v1/*`；未登录一律使用 `web/src/data/mock.ts` 示例数据，登录后按 token 读取当前用户真实数据。
 
 ## 🧪 测试与开发命令
 
 ```bash
-make test       # 数据库双后端 + 分析 + 插件 + 账号体系 + 前端鉴权测试
+make test       # 数据库双后端 + 分析 + 图谱 + 插件 + 账号体系 + 迁移测试
 make test-api   # API 测试（需在非沙箱环境运行）
 make test-web   # React SPA 测试（Vitest + Testing Library）
 make build-web  # 构建 React SPA
@@ -331,7 +329,7 @@ journalctl --user -u personal-profile-web.service -f
 8501/8502 端口可能已被旧进程占用：
 
 ```bash
-pgrep -af "streamlit run|uvicorn api.main"
+pgrep -af "uvicorn api.main"
 # 确认后停止旧服务，或使用 systemctl --user restart personal-profile-web.service
 ```
 

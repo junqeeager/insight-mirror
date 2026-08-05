@@ -60,7 +60,7 @@ def main():
     logger.info("  1. 配置数据源: 编辑 config.yaml")
     logger.info("  2. 同步数据: python scripts/sync.py")
     logger.info("  3. 生成报告: python scripts/generate_report.py")
-    logger.info("  4. 启动前端: streamlit run frontend/app.py")
+    logger.info("  4. 启动前端: python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8501")
 
 
 if __name__ == "__main__":

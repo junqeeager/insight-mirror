@@ -27,17 +27,3 @@ services:
     restart: unless-stopped
     profiles:
       - scheduler
-
-  # API 服务（第二阶段）
-  api:
-    build: .
-    command: uvicorn api.main:app --host 0.0.0.0 --port 8502
-    ports:
-      - "8502:8502"
-    volumes:
-      - ./config.yaml:/app/config.yaml
-      - ./data:/app/data
-      - ./.env:/app/.env
-    environment:
-      - TZ=Asia/Shanghai
-    restart: unless-stopped

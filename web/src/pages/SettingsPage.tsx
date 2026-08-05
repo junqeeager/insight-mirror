@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  changePassword,
+  deleteAccount,
+  exportAccountData,
   fetchAdminUsers,
-  fetchEvents,
   fetchSources,
   fetchStats,
   patchAdminUser,
@@ -18,7 +20,7 @@ import {
   SourcePill,
 } from "../components/ui";
 import { mockSources, mockStats } from "../data/mock";
-import { downloadText, eventsToCsv } from "../lib/format";
+import { downloadBlob } from "../lib/format";
 import type { SourceConfig, Stats, User } from "../types";
 
 interface FieldDef {
@@ -109,7 +111,7 @@ function valuesToConfig(
 }
 
 export function SettingsPage() {
-  const { isAuthenticated, isAdmin, requireAuth, user } = useAuth();
+  const { isAuthenticated, isAdmin, logout, requireAuth, user } = useAuth();
   const [sources, setSources] = useState<SourceConfig[]>(mockSources);
   const [loadingSources, setLoadingSources] = useState(false);
   const [values, setValues] = useState<Record<string, Record<string, string>>>(() =>
@@ -125,6 +127,9 @@ export function SettingsPage() {
   const [error, setError] = useState("");
   const [users, setUsers] = useState<User[]>([]);
   const [resetPasswords, setResetPasswords] = useState<Record<string, string>>({});
+  const [oldPassword, setOldPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
 
   useEffect(() => {
     setNotice("");
@@ -261,19 +266,61 @@ export function SettingsPage() {
     requireAuth(() => void Promise.resolve(action()));
   }
 
-  async function exportData() {
+  async function handleServerExport(format: "csv" | "json") {
+    setNotice("");
+    setError("");
     try {
-      const events = await fetchEvents({ limit: 10000 });
-      downloadText(
-        `events_${user?.username ?? "user"}.csv`,
-        eventsToCsv(events),
-        "text/csv;charset=utf-8",
+      const blob = await exportAccountData(format);
+      downloadBlob(
+        blob,
+        `events_${user?.username ?? "user"}.${format}`,
       );
-      setNotice("CSV 已导出");
+      setNotice(`数据已导出为 ${format.toUpperCase()}`);
+      window.setTimeout(() => setNotice(""), 6000);
     } catch (err) {
       setError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data
           ?.detail ?? "导出失败",
+      );
+    }
+  }
+
+  async function handleChangePassword() {
+    setNotice("");
+    setError("");
+    try {
+      await changePassword(oldPassword, newPassword);
+      setOldPassword("");
+      setNewPassword("");
+      setNotice("密码已修改，请使用新密码重新登录");
+      window.setTimeout(() => setNotice(""), 6000);
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? "修改密码失败",
+      );
+    }
+  }
+
+  async function handleDeleteAccount() {
+    if (
+      !window.confirm(
+        "此操作将永久删除你的账号与全部行为数据，且不可恢复。确定继续吗？",
+      )
+    ) {
+      return;
+    }
+    setNotice("");
+    setError("");
+    try {
+      await deleteAccount(deletePassword);
+      setDeletePassword("");
+      await logout();
+      setNotice("账号已注销");
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? "注销失败",
       );
     }
   }
@@ -455,14 +502,68 @@ export function SettingsPage() {
 
       <section className="card">
         <h2>数据导出</h2>
-        <p className="muted">导出你的全部事件为 CSV，仅登录后可下载真实数据。</p>
+        <p className="muted">从服务端导出你的全部事件，仅登录后可下载真实数据。</p>
         <button
           type="button"
           className="button primary"
-          onClick={() => withAuth(() => exportData())}
+          onClick={() => withAuth(() => handleServerExport("csv"))}
         >
-          导出我的数据（CSV）
+          导出 CSV
         </button>
+        <button
+          type="button"
+          className="button"
+          onClick={() => withAuth(() => handleServerExport("json"))}
+        >
+          导出 JSON
+        </button>
+      </section>
+
+      <section className="card">
+        <h2>账号管理</h2>
+        <p className="muted">修改密码后，所有已登录会话将立即失效。</p>
+        <div className="account-password">
+          <input
+            type="password"
+            placeholder="当前密码"
+            value={oldPassword}
+            onChange={(e) => setOldPassword(e.target.value)}
+          />
+          <input
+            type="password"
+            placeholder="新密码（至少 8 位）"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+          />
+          <button
+            type="button"
+            className="button primary"
+            disabled={newPassword.length < 8 || !oldPassword}
+            onClick={() => withAuth(() => handleChangePassword())}
+          >
+            修改密码
+          </button>
+        </div>
+        <h3 className="section-heading">注销账号</h3>
+        <p className="muted">
+          永久删除你的账号与全部行为数据，不可恢复。请谨慎操作。
+        </p>
+        <div className="account-delete">
+          <input
+            type="password"
+            placeholder="输入当前密码确认"
+            value={deletePassword}
+            onChange={(e) => setDeletePassword(e.target.value)}
+          />
+          <button
+            type="button"
+            className="button danger"
+            disabled={!deletePassword}
+            onClick={() => withAuth(() => handleDeleteAccount())}
+          >
+            注销账号
+          </button>
+        </div>
       </section>
 
       {isAuthenticated && isAdmin && (

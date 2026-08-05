@@ -151,6 +151,47 @@ export async function fetchAdminUsers(): Promise<User[]> {
   return data;
 }
 
+export async function fetchReport(
+  period: string,
+  format: "html" | "txt" | "json",
+): Promise<Blob> {
+  const { data } = await api.get<Blob>("/report", {
+    params: { period, format },
+    responseType: "blob",
+    timeout: 30000,
+  });
+  return data;
+}
+
+export async function exportAccountData(
+  format: "csv" | "json",
+): Promise<Blob> {
+  const { data } = await api.post<Blob>("/account/export", null, {
+    params: { format },
+    responseType: "blob",
+    timeout: 30000,
+  });
+  return data;
+}
+
+export async function changePassword(
+  oldPassword: string,
+  newPassword: string,
+): Promise<{ ok: boolean }> {
+  const { data } = await api.post("/account/password", {
+    old_password: oldPassword,
+    new_password: newPassword,
+  });
+  return data;
+}
+
+export async function deleteAccount(
+  password: string,
+): Promise<{ ok: boolean }> {
+  const { data } = await api.delete("/account", { data: { password } });
+  return data;
+}
+
 export async function patchAdminUser(
   userId: string,
   body: { status?: string; password?: string },

@@ -89,6 +89,105 @@ def test_health():
     assert r.json() == {"status": "ok"}
 
 
+def test_report_endpoint_formats():
+    db = Database(os.environ["PROFILE_DB_PATH"])
+    db.init_tables()
+    ProfileGenerator(db, {}).generate(user_id=_ALICE_ID, period="weekly", persist=True)
+    db.close()
+
+    for fmt, media in (
+        ("html", "text/html"),
+        ("txt", "text/plain"),
+        ("json", "application/json"),
+    ):
+        r = client.get(
+            "/api/v1/report",
+            params={"period": "weekly", "format": fmt},
+            headers=_auth(_ALICE_TOKEN),
+        )
+        assert r.status_code == 200, r.text
+        assert media in r.headers["content-type"]
+        assert "attachment" in r.headers["content-disposition"]
+
+    r = client.get(
+        "/api/v1/report",
+        params={"period": "monthly", "format": "html"},
+        headers=_auth(_ALICE_TOKEN),
+    )
+    assert r.status_code == 404
+
+
+def test_account_password_export_and_delete():
+    r = client.post(
+        "/api/v1/auth/register",
+        json={"username": "carol", "password": "carol-pass-123"},
+    )
+    assert r.status_code == 200
+    carol_id = r.json()["id"]
+    client.patch(
+        f"/api/v1/admin/users/{carol_id}",
+        json={"status": "active"},
+        headers=_auth(_ADMIN_TOKEN),
+    )
+    token = _login("carol", "carol-pass-123")
+
+    # 错误旧密码被拒绝
+    r = client.post(
+        "/api/v1/account/password",
+        json={"old_password": "wrong", "new_password": "carol-new-pass"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 400
+
+    r = client.post(
+        "/api/v1/account/password",
+        json={"old_password": "carol-pass-123", "new_password": "carol-new-pass"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    # 改密后旧会话失效，新密码可登录
+    r = client.get("/api/v1/stats", headers=_auth(token))
+    assert r.status_code == 401
+    token = _login("carol", "carol-new-pass")
+
+    # 服务端导出 CSV / JSON
+    r = client.post(
+        "/api/v1/account/export",
+        params={"format": "csv"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    assert "id,timestamp,source" in r.text
+    r = client.post(
+        "/api/v1/account/export",
+        params={"format": "json"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+
+    # 注销账号并物理删除数据
+    r = client.request(
+        "DELETE",
+        "/api/v1/account",
+        json={"password": "wrong"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 400
+    r = client.request(
+        "DELETE",
+        "/api/v1/account",
+        json={"password": "carol-new-pass"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    r = client.post(
+        "/api/v1/auth/login",
+        json={"username": "carol", "password": "carol-new-pass"},
+    )
+    assert r.status_code == 401
+
+
 def test_spa_served_and_fallback_when_dist_exists():
     """React 构建产物存在时，同源托管 SPA 并提供浏览器路由回退。"""
     from api.main import WEB_DIST

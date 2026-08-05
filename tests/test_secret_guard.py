@@ -82,7 +82,7 @@ def test_allowed_samples():
         (".env.example", _ENV_EXAMPLE),
         ("config.yaml", 'url: sqlite:///./data/profile.db\ntoken: "${GITHUB_TOKEN}"\n'),
         ("README.md", "复制 `SESSDATA=xxx` 和 `bili_jct=xxx` 的值\n设置 `APP_PASSWORD` 作为访问密码\n"),
-        ("frontend/auth.py", 'expected = os.environ.get("APP_PASSWORD", "")\n'),
+        ("web/src/auth/AuthContext.tsx", 'expected = localStorage.getItem("token")\n'),
         ("docs/example.md", "postgresql+psycopg://profile:profile@localhost:5433/profile\n"),
         ("lib/binary.dat", "\x00\x01" + _bili_cookie()),
     ]

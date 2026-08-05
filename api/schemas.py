@@ -215,3 +215,16 @@ class AdminUserPatch(BaseModel):
 
     status: Optional[str] = None
     password: Optional[str] = None
+
+
+class ChangePasswordIn(BaseModel):
+    """修改当前用户密码"""
+
+    old_password: str
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class DeleteAccountIn(BaseModel):
+    """注销当前用户（需密码确认）"""
+
+    password: str

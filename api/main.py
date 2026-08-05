@@ -14,11 +14,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.deps import ensure_initialized, get_config, get_db_url
 from api.routers import (
+    account,
     admin,
     auth,
     events,
     graph,
     profile,
+    report,
     sources,
     stats,
     sync,
@@ -126,9 +128,11 @@ async def request_logging(request: Request, call_next):
 app.include_router(events.router)
 app.include_router(topics.router)
 app.include_router(profile.router)
+app.include_router(report.router)
 app.include_router(stats.router)
 app.include_router(graph.router)
 app.include_router(auth.router)
+app.include_router(account.router)
 app.include_router(sources.router)
 app.include_router(sync.router)
 app.include_router(admin.router)

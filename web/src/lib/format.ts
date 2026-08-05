@@ -39,6 +39,15 @@ export function downloadText(
   URL.revokeObjectURL(url);
 }
 
+export function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function eventsToCsv(events: { id: string; timestamp: string; source: string; event_type: string; title: string; url?: string | null; tags: string[] }[]): string {
   const header = "id,timestamp,source,type,title,url,tags";
   const escape = (v: string) => `"${v.replaceAll('"', '""')}"`;
