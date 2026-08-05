@@ -200,6 +200,7 @@ make run-web    # 启动 Streamlit
 ## 🔒 隐私与安全
 
 - 账号体系：注册后需管理员批准；密码使用 scrypt 加盐哈希，会话 token 只存哈希、30 天有效；未登录不渲染任何个人数据。
+- 首页未登录时展示示例数据预览（公开可见）；查看真实画像、同步数据、生成报告、用户管理等功能需登录后使用。
 - 每个用户的数据源凭据（B站 Cookie、GitHub Token 等）加密后存数据库，使用 `.env` 的 `APP_SECRET_KEY` 派生密钥，界面展示始终脱敏；`config.yaml` 只通过 `${VAR}` 引用，仓库中不包含任何真实凭据。
 - 设置页展示配置时自动脱敏 Cookie / Token / Secret。
 - FastAPI 服务默认仅监听本机（:8502），Cloudflare 隧道只转发 Streamlit 端口（:8501），不会把 API 直接暴露到公网。

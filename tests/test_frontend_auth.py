@@ -14,6 +14,7 @@ from core.database import Database  # noqa: E402
 from frontend.auth import login_user, register_user  # noqa: E402
 
 _APP_PATH = str(Path(project_root) / "frontend" / "app.py")
+_PAGE1_PATH = str(Path(project_root) / "frontend" / "pages" / "1_📈_时间视图.py")
 
 
 def _config_with_db(db_path: str) -> dict:
@@ -105,14 +106,24 @@ def _login(at: AppTest, username: str, password: str) -> AppTest:
     return at
 
 
-def test_dashboard_requires_login():
+def test_dashboard_preview_without_login():
     _patch_app()
     at = AppTest.from_file(_APP_PATH, default_timeout=20)
     at.run()
 
+    assert any("预览模式" in caption.value for caption in at.caption)
+    labels = [metric.label for metric in at.metric]
+    assert "示例总事件数" in labels
+    assert at.session_state.filtered_state.get("user") is None
+
+
+def test_feature_page_requires_login():
+    _patch_app()
+    at = AppTest.from_file(_PAGE1_PATH, default_timeout=20)
+    at.run()
+
     assert any("登录 / 注册" in markdown.value for markdown in at.markdown)
     assert not at.metric
-    assert at.session_state.filtered_state.get("user") is None
 
 
 def test_dashboard_rejects_wrong_password():
@@ -125,7 +136,8 @@ def test_dashboard_rejects_wrong_password():
     _login(at, "alice", "wrong-pass")
 
     assert any("用户名或密码错误" in error.value for error in at.error)
-    assert not at.metric
+    labels = [metric.label for metric in at.metric]
+    assert "示例总事件数" in labels
     assert at.session_state.filtered_state.get("user") is None
 
 
@@ -142,20 +154,26 @@ def test_dashboard_accepts_login_and_enters_main_page():
     assert any(button.label == "退出登录" for button in at.button)
 
 
-def test_logout_clears_login():
+def test_logout_clears_login_state():
+    import types
+
+    import frontend.auth as auth
+
     _patch_app()
-    at = AppTest.from_file(_APP_PATH, default_timeout=20)
-    at.run()
-    _login(at, "alice", "alice-pass-123")
-    assert at.session_state["user"]["username"] == "alice"
-
-    logout = next(button for button in at.button if button.label == "退出登录")
-    logout.click().run()
-    at.run()
-
-    assert at.session_state.filtered_state.get("user") is None
-    assert any("登录 / 注册" in markdown.value for markdown in at.markdown)
-    assert not at.metric
+    fake_st = types.SimpleNamespace(
+        session_state={
+            "user": {"id": "u1", "username": "alice", "role": "user"},
+            "token": "token-x",
+        }
+    )
+    original_st = auth.st
+    auth.st = fake_st
+    try:
+        auth.logout()
+    finally:
+        auth.st = original_st
+    assert "user" not in fake_st.session_state
+    assert "token" not in fake_st.session_state
 
 
 if __name__ == "__main__":

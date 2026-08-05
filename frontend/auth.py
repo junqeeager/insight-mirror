@@ -109,20 +109,16 @@ def login_user(config: dict, username: str, password: str) -> tuple:
         db.close()
 
 
-def require_login() -> dict:
-    """数据渲染前调用；未登录时展示登录/注册页并停止后续脚本。"""
-    user = st.session_state.get("user")
-    if user:
-        return user
-
+def render_auth_ui() -> None:
+    """渲染登录/注册表单；登录成功后写入 session_state 并 rerun。"""
     config = load_config()
     st.markdown("### 🔐 登录 / 注册")
-    mode = st.radio("登录方式", ["登录", "注册"], horizontal=True, key="auth_mode")
-    username = st.text_input("用户名", key="auth_username")
-    password = st.text_input("密码", type="password", key="auth_password")
+    mode = st.radio("登录方式", ["登录", "注册"], horizontal=True)
+    username = st.text_input("用户名")
+    password = st.text_input("密码", type="password")
     confirm = None
     if mode == "注册":
-        confirm = st.text_input("确认密码", type="password", key="auth_confirm")
+        confirm = st.text_input("确认密码", type="password")
 
     if st.button("登录" if mode == "登录" else "注册", width="stretch"):
         if mode == "注册":
@@ -142,6 +138,14 @@ def require_login() -> dict:
                 st.rerun()
             else:
                 st.error(message)
+
+
+def require_login() -> dict:
+    """功能页调用；未登录时渲染登录/注册表单并停止后续脚本。"""
+    user = st.session_state.get("user")
+    if user:
+        return user
+    render_auth_ui()
     st.stop()
 
 
