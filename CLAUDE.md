@@ -58,6 +58,7 @@ web/（React SPA）──同源 /api/v1──▶ FastAPI ──▶ report/（HTM
 
 - systemd 用户服务（`~/.config/systemd/user/`，由 `deploy/*.service` 复制安装）：
   - `personal-profile-web.service`：uvicorn `api.main:app`，监听 `0.0.0.0:8501`，工作目录为仓库根目录。
+  - 该服务已配置 `HTTP_PROXY`/`HTTPS_PROXY=http://127.0.0.1:7890`：后端访问 Google OAuth/API 必须走本机代理，改端口时同步更新 `deploy/personal-profile-web.service` 与已安装单元。
   - `personal-profile-tunnel.service`：cloudflared 隧道，把 `t.506ikun.space` 转发到 `127.0.0.1:8501`。
   - `personal-profile-sync.service` + `.timer`：定时 `python scripts/sync.py`（全用户全源）。
   - `personal-profile-report.service` + `.timer`：定时生成周报。

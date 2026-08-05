@@ -8,6 +8,10 @@ Type=simple
 WorkingDirectory=/home/junqeeager/aicode
 ExecStart=/usr/bin/python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8501
 Environment=PYTHONUNBUFFERED=1
+# 本机代理：后端需要访问 Google OAuth/API（地址按实际代理端口调整）
+Environment=HTTP_PROXY=http://127.0.0.1:7890
+Environment=HTTPS_PROXY=http://127.0.0.1:7890
+Environment=NO_PROXY=localhost,127.0.0.1
 Restart=always
 RestartSec=5
 
