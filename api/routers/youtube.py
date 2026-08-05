@@ -1,10 +1,13 @@
 """YouTube OAuth 授权与 Takeout 观看历史导入 API"""
 
 import json
+import logging
 import secrets
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import RedirectResponse
 
 from api.deps import get_config, get_current_user, get_db
 from api.schemas import (
@@ -20,6 +23,7 @@ from core.plugin_loader import PluginManager
 router = APIRouter(prefix="/api/v1/sources/youtube", tags=["youtube"])
 
 OAUTH_TTL_MINUTES = 10
+logger = logging.getLogger("api.youtube")
 
 
 def _plugin_for(db: Database, user_id: str, config: dict):
@@ -80,7 +84,8 @@ def youtube_token(
     plugin = _plugin_for(db, user["id"], config)
     try:
         tokens = plugin.exchange_code(body.code, flow["code_verifier"])
-    except Exception:
+    except Exception as exc:
+        logger.exception("YouTube token 交换失败: %s", exc)
         raise HTTPException(status_code=400, detail="Google 授权失败，请重新连接")
     refresh_token = str(tokens.get("refresh_token") or "")
     if not refresh_token:
@@ -95,6 +100,51 @@ def youtube_token(
         enabled=True,
     )
     return {"ok": True, "message": "YouTube 已连接，等待同步"}
+
+
+@router.get("/callback")
+def youtube_callback(
+    code: str = "",
+    state: str = "",
+    error: str = "",
+    error_description: str = "",
+    db: Database = Depends(get_db),
+    config: dict = Depends(get_config),
+):
+    """Google 授权回跳入口：服务端换 token 后 302 回设置页，不依赖前端回调。"""
+    public_url = str(config.get("app", {}).get("public_url", "") or "").rstrip("/")
+
+    def redirect(message: str, ok: bool = False) -> RedirectResponse:
+        query = urlencode({"youtube": "ok" if ok else "error", "message": message})
+        return RedirectResponse(f"{public_url}/settings?{query}")
+
+    if error:
+        return redirect(error_description or error)
+    if not code or not state:
+        return redirect("授权参数缺失，请重新连接")
+
+    flow = db.consume_oauth_flow_by_state(state)
+    if flow is None:
+        return redirect("授权状态无效或已过期，请重新连接")
+
+    plugin = _plugin_for(db, flow["user_id"], config)
+    try:
+        tokens = plugin.exchange_code(code, flow["code_verifier"])
+    except Exception as exc:
+        logger.exception("YouTube 回调换 token 失败: %s", exc)
+        return redirect("Google 授权失败，请重新连接")
+
+    refresh_token = str(tokens.get("refresh_token") or "")
+    if not refresh_token:
+        return redirect("Google 未返回 refresh_token，请撤销本应用授权后重试")
+
+    db.set_source_config(
+        flow["user_id"],
+        "youtube",
+        encrypt_config({"refresh_token": refresh_token}),
+        enabled=True,
+    )
+    return redirect("YouTube 已连接，等待同步", ok=True)
 
 
 @router.post("/takeout", response_model=YouTubeTakeoutOut)

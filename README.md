@@ -224,6 +224,7 @@ make run-web   # 生产同源：uvicorn api.main:app --host 0.0.0.0 --port 8501
 | `GET/PUT` | `/api/v1/sources` | 查看/保存自己的数据源配置 |
 | `POST` | `/api/v1/sources/{source}/test` | 测试自己的数据源连接 |
 | `GET` | `/api/v1/sources/youtube/auth-url` | 生成 YouTube OAuth 授权地址（PKCE） |
+| `GET` | `/api/v1/sources/youtube/callback` | Google 授权回跳入口（服务端换 token 后跳回设置页） |
 | `POST` | `/api/v1/sources/youtube/token` | 用授权码换取并加密保存 refresh_token |
 | `POST` | `/api/v1/sources/youtube/takeout` | 上传 Takeout watch-history.json 导入观看历史 |
 | `POST/GET` | `/api/v1/sync` | 触发/查询自己的数据同步任务 |

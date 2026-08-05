@@ -201,8 +201,33 @@ export function SettingsPage() {
   }, [isAuthenticated, isAdmin]);
 
   useEffect(() => {
+    const status = searchParams.get("youtube");
     const code = searchParams.get("code");
     const state = searchParams.get("state");
+    const clear = () => setSearchParams({}, { replace: true });
+    const applySources = (result: SourceConfig[]) => {
+      setSources(result);
+      const nextValues: Record<string, Record<string, string>> = {};
+      const nextEnabled: Record<string, boolean> = {};
+      for (const item of result) {
+        nextValues[item.source] = sourceToValues(item);
+        nextEnabled[item.source] = item.enabled;
+      }
+      setValues(nextValues);
+      setEnabled(nextEnabled);
+    };
+
+    if (status === "ok") {
+      setNotice(searchParams.get("message") || "YouTube 已连接");
+      fetchSources().then(applySources).catch(() => undefined);
+      clear();
+      return;
+    }
+    if (status === "error") {
+      setError(searchParams.get("message") || "YouTube 连接失败");
+      clear();
+      return;
+    }
     if (!code || !state) return;
     setNotice("");
     setError("");
@@ -210,15 +235,7 @@ export function SettingsPage() {
       .then(async (result) => {
         setNotice(result.message);
         const refreshed = await fetchSources();
-        setSources(refreshed);
-        const nextValues: Record<string, Record<string, string>> = {};
-        const nextEnabled: Record<string, boolean> = {};
-        for (const item of refreshed) {
-          nextValues[item.source] = sourceToValues(item);
-          nextEnabled[item.source] = item.enabled;
-        }
-        setValues(nextValues);
-        setEnabled(nextEnabled);
+        applySources(refreshed);
       })
       .catch((err) => {
         setError(
@@ -227,7 +244,7 @@ export function SettingsPage() {
         );
       })
       .finally(() => {
-        setSearchParams({}, { replace: true });
+        clear();
       });
   }, [searchParams, setSearchParams]);
 

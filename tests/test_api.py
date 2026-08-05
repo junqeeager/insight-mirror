@@ -422,6 +422,59 @@ def test_youtube_auth_url_and_token_exchange():
         youtube_router._plugin_for = original
 
 
+def test_youtube_callback_exchanges_and_redirects():
+    from urllib.parse import parse_qs, urlparse
+
+    r = client.get(
+        "/api/v1/sources/youtube/auth-url", headers=_auth(_ALICE_TOKEN)
+    )
+    assert r.status_code == 200
+    state = parse_qs(urlparse(r.json()["url"]).query)["state"][0]
+
+    class FakePlugin:
+        def exchange_code(self, code, verifier):
+            assert code == "callback-code"
+            assert verifier
+            return {"refresh_token": "rt-callback"}
+
+    original = youtube_router._plugin_for
+    youtube_router._plugin_for = lambda db, user_id, config: FakePlugin()
+    try:
+        r = client.get(
+            "/api/v1/sources/youtube/callback",
+            params={"code": "callback-code", "state": state},
+            follow_redirects=False,
+        )
+        assert r.status_code in (302, 307)
+        assert "youtube=ok" in r.headers["location"]
+
+        db = Database(os.environ["PROFILE_DB_PATH"])
+        saved = db.get_source_config(_ALICE_ID, "youtube")
+        db.close()
+        assert saved is not None
+        assert saved["enabled"] is True
+        assert saved["config"]["refresh_token"].startswith("enc:")
+
+        # 无效 state / 用户拒绝都回到错误提示
+        r = client.get(
+            "/api/v1/sources/youtube/callback",
+            params={"code": "x", "state": "bad-state"},
+            follow_redirects=False,
+        )
+        assert "youtube=error" in r.headers["location"]
+
+        r = client.get(
+            "/api/v1/sources/youtube/callback",
+            params={"error": "access_denied", "error_description": "用户拒绝"},
+            follow_redirects=False,
+        )
+        assert "youtube=error" in r.headers["location"]
+        message = parse_qs(urlparse(r.headers["location"]).query).get("message")
+        assert message == ["用户拒绝"]
+    finally:
+        youtube_router._plugin_for = original
+
+
 def test_youtube_takeout_import_and_validation():
     import json
 

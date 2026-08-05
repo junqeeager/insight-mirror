@@ -113,7 +113,10 @@ def test_build_auth_url_includes_pkce():
     url = plugin.build_auth_url("state-1", "verifier-1")
     assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
     assert "client_id=test-client-id" in url
-    assert "redirect_uri=http%3A%2F%2Flocalhost%3A5173%2Fsettings" in url
+    assert (
+        "redirect_uri=http%3A%2F%2Flocalhost%3A5173%2Fapi%2Fv1%2Fsources%2Fyoutube%2Fcallback"
+        in url
+    )
     assert "code_challenge=" in url
     assert "code_challenge_method=S256" in url
     assert "state=state-1" in url

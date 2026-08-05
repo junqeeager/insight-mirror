@@ -953,6 +953,19 @@ class Database:
             conn.execute(delete(oauth_flows).where(oauth_flows.c.state == state))
         return dict(row)
 
+    def consume_oauth_flow_by_state(self, state: str) -> Optional[dict]:
+        """按 state 取回并删除授权流（OAuth 回调用，校验过期）。"""
+        stmt = select(oauth_flows).where(oauth_flows.c.state == state)
+        with self.engine.begin() as conn:
+            row = conn.execute(stmt).mappings().first()
+            if row is None:
+                return None
+            if row["expires_at"] <= datetime.now():
+                conn.execute(delete(oauth_flows).where(oauth_flows.c.state == state))
+                return None
+            conn.execute(delete(oauth_flows).where(oauth_flows.c.state == state))
+        return dict(row)
+
     def cleanup_expired_oauth_flows(self) -> int:
         """清理所有已过期的授权流，返回删除条数。"""
         stmt = delete(oauth_flows).where(oauth_flows.c.expires_at <= datetime.now())

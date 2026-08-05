@@ -79,8 +79,8 @@ class Plugin(DataSourcePlugin):
         return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
     def redirect_uri(self) -> str:
-        """Google 回调地址：前端设置页（SPA 路由）。"""
-        return f"{self.public_url.rstrip('/')}/settings"
+        """Google 回调地址：后端 /callback，由服务端直接换取 refresh_token。"""
+        return f"{self.public_url.rstrip('/')}/api/v1/sources/youtube/callback"
 
     def build_auth_url(self, state: str, code_verifier: str) -> str:
         """构造带 PKCE 的 Google 授权 URL。"""

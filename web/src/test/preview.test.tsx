@@ -156,6 +156,14 @@ describe("未登录公开预览", () => {
     );
     expect(await screen.findByText("YouTube 已连接")).toBeInTheDocument();
   });
+
+  it("后端回调成功跳回后显示已连接提示", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    renderRoute("/settings?youtube=ok&message=YouTube 已连接，等待同步");
+    expect(
+      await screen.findByText("YouTube 已连接，等待同步"),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("登录 / 注册", () => {

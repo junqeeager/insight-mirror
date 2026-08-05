@@ -177,7 +177,18 @@ def test_migration_003_creates_oauth_flows_and_cleanup():
             "verifier-2",
             datetime.now() - timedelta(minutes=1),
         )
+        db.save_oauth_flow(
+            "u1",
+            "state-by-state",
+            "verifier-4",
+            datetime.now() + timedelta(minutes=5),
+        )
         assert db.cleanup_expired_oauth_flows() == 1
+
+        by_state = db.consume_oauth_flow_by_state("state-by-state")
+        assert by_state is not None
+        assert by_state["code_verifier"] == "verifier-4"
+        assert db.consume_oauth_flow_by_state("state-by-state") is None
 
         flow = db.consume_oauth_flow("u1", "state-1")
         assert flow is not None

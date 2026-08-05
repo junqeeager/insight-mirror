@@ -11,7 +11,7 @@
 - `main` 分支干净，最新提交 `7cd9a30`；Git 元数据在 `.git-data/`（见「Git 工作流」）。
 - FastAPI 迁移已完成：API 层、多用户账号、SQLite/PostgreSQL 双后端、后台任务、报告与图谱均可用。
 - 生产部署正常：systemd 用户服务 `personal-profile-web.service` 在 :8501 同时托管 SPA 与 API，经 Cloudflare Tunnel 对外（公网 `https://t.506ikun.space`）。
-- YouTube 数据源（本交接的新功能）：OAuth2 自动同步喜欢/订阅 + Takeout 观看历史导入，插件、API、前端入口与离线测试已落地；首次使用前需配置 `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` 并在 Google 控制台登记回调地址。
+- YouTube 数据源（本交接的新功能）：OAuth2 自动同步喜欢/订阅 + Takeout 观看历史导入，插件、API、前端入口与离线测试已落地；首次使用前需配置 `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET`，并在 Google 控制台把 `{app.public_url}/api/v1/sources/youtube/callback` 登记为授权回调地址（服务端换 token，不依赖前端）。
 
 ## 目录地图
 
