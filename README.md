@@ -1,11 +1,11 @@
 # 🧠 个人认知画像系统 · Personal Cognitive Profile
 
 > 基于长期行为数据（B站、浏览器历史、GitHub、RSS）构建动态个人认知画像，并提供可视化看板与定期报告。
-> A personal cognitive-profile system that turns long-term behavioral data into an evolving interest profile with a Streamlit dashboard.
+> A personal cognitive-profile system that turns long-term behavioral data into an evolving interest profile with a React SPA + FastAPI dashboard.
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)
+![React](https://img.shields.io/badge/React-18+-blue.svg)
 
 ## ✨ 功能特性
 
@@ -28,9 +28,9 @@ plugins/（B站 / 浏览器历史 / GitHub / RSS）
         │ scripts/sync.py 采集写入
         ▼
 SQLite（data/profile.db）
-        ▲                    ▲
-        │ 直连回退             │ 查询
-frontend/（Streamlit）  ──▶  api/（FastAPI，仅监听本机 :8502）
+        ▲
+        │ 查询
+web/（React SPA） ──▶ api/（FastAPI，生产同源 :8501，开发代理 :8502）
         │
         ▼
 analysis/（关键词提取 / 主题聚类 / 趋势 / 洞察）
@@ -39,7 +39,7 @@ analysis/（关键词提取 / 主题聚类 / 趋势 / 洞察）
 report/（HTML 周报 / 月报 / 年报）
 ```
 
-Streamlit 前端优先调用 FastAPI（带 TTL 缓存），API 不可用时自动回退直连 SQLite，保证低流量个人项目的实时响应。
+React SPA 未登录时可浏览全站示例数据预览；登录后通过 FastAPI 读取当前用户的真实数据。旧 Streamlit 前端保留在 `frontend/` 作为回退。
 
 ## 🚀 快速开始
 
@@ -87,10 +87,21 @@ python scripts/sync.py --user alice --source bilibili
 ### 5. 启动前端
 
 ```bash
-streamlit run frontend/app.py
+# 生产/本机同源运行（同时提供页面与 /api）
+python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8501
+
+# 开发模式：Vite 热更新（代理 /api 到 :8502）
+cd web && npm install && npm run dev
 ```
 
 访问 http://localhost:8501 即可使用。
+
+部署前构建 SPA：
+
+```bash
+npm --prefix web install
+npm --prefix web run build   # 产出 web/dist，由 FastAPI 同源托管
+```
 
 ## 🗄️ 数据库配置
 
@@ -138,7 +149,11 @@ personal-profile/
 │   ├── generator.py        # 报告生成器
 │   └── templates/          # HTML 模板
 │
-├── frontend/                # Streamlit 前端
+├── web/                     # React SPA（Vite + TypeScript + React Router）
+│   ├── src/                 # 页面、Auth、API 客户端、mock 预览数据
+│   └── dist/                # 构建产物（生产由 FastAPI 托管）
+│
+├── frontend/                # 旧 Streamlit 前端（回退保留）
 │   ├── app.py              # 主入口
 │   ├── auth.py             # 登录/注册鉴权
 │   ├── theme.py            # Astryx 主题注入（纯 CSS）
@@ -153,8 +168,8 @@ personal-profile/
 │   └── migrate_db.py       # SQLite ↔ PostgreSQL 数据迁移
 │
 ├── api/                     # FastAPI 服务层
-│   ├── main.py             # 应用入口（含 jieba 预热与全局异常处理）
-│   └── routers/            # /events /topics /profile /stats /graph
+│   ├── main.py             # 应用入口（含 jieba 预热、SPA 托管与全局异常处理）
+│   └── routers/            # /events /topics /profile /stats /graph /auth /sources /sync /admin
 │
 └── docs/                    # 设计文档（含 FastAPI 迁移规划）
 ```
@@ -163,6 +178,7 @@ personal-profile/
 
 ```bash
 make run-api   # 等价于 uvicorn api.main:app --host 0.0.0.0 --port 8502
+make run-web   # 生产同源：uvicorn api.main:app --host 0.0.0.0 --port 8501
 ```
 
 | 方法 | 端点 | 说明 |
@@ -185,25 +201,28 @@ make run-api   # 等价于 uvicorn api.main:app --host 0.0.0.0 --port 8502
 
 除 `/health` 和注册/登录外，所有 API 都需要 `Authorization: Bearer <token>`，并按登录用户隔离数据。
 
-Streamlit 通过 `frontend/data_access.py` 优先调用 API，API 不可用时自动回退直连 SQLite；数据结果带 TTL 缓存（30s/60s/300s）。
+React SPA 通过 `web/src/api/client.ts` 调用同源 `/api/v1/*`；未登录一律使用 `web/src/data/mock.ts` 示例数据，登录后按 token 读取当前用户真实数据。旧 Streamlit 通过 `frontend/data_access.py` 优先调用 API 并回退直连 SQLite。
 
 ## 🧪 测试与开发命令
 
 ```bash
 make test       # 数据库双后端 + 分析 + 插件 + 账号体系 + 前端鉴权测试
 make test-api   # API 测试（需在非沙箱环境运行）
+make test-web   # React SPA 测试（Vitest + Testing Library）
+make build-web  # 构建 React SPA
 make init-db    # 初始化数据库
 make sync       # 同步所有数据源
-make run-web    # 启动 Streamlit
+make run-web    # 启动 React SPA + API（:8501）
+make run-web-dev # Vite 开发服务器（:5173）
 ```
 
 ## 🔒 隐私与安全
 
 - 账号体系：注册后需管理员批准；密码使用 scrypt 加盐哈希，会话 token 只存哈希、30 天有效；未登录不渲染任何个人数据。
-- 首页未登录时展示示例数据预览（公开可见）；查看真实画像、同步数据、生成报告、用户管理等功能需登录后使用。
+- 所有页面未登录均可浏览完整界面（示例数据 + “预览”标识）；查看真实画像、同步数据、生成报告、导出与用户管理等功能需登录后使用，未登录点击会弹出登录引导。
 - 每个用户的数据源凭据（B站 Cookie、GitHub Token 等）加密后存数据库，使用 `.env` 的 `APP_SECRET_KEY` 派生密钥，界面展示始终脱敏；`config.yaml` 只通过 `${VAR}` 引用，仓库中不包含任何真实凭据。
 - 设置页展示配置时自动脱敏 Cookie / Token / Secret。
-- FastAPI 服务默认仅监听本机（:8502），Cloudflare 隧道只转发 Streamlit 端口（:8501），不会把 API 直接暴露到公网。
+- 生产由同一个 uvicorn 监听 :8501 同时提供 SPA 与 `/api`；开发期 FastAPI 默认仅监听本机（:8502），Vite 代理不会把 API 直接暴露到公网。
 - 仓库公开且每次 commit 会自动推送到 GitHub：`deploy/pre-push` 钩子（由 `setup.sh` 安装）会在推送前运行 `scripts/check_secrets.py`，检测到 B 站 Cookie、GitHub Token、私钥、带密码的数据库 URL 等真实凭据时阻止推送。
 
 ## 🔌 添加新数据源

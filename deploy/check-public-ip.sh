@@ -15,14 +15,14 @@ echo "  公网 IP: $PUBLIC_IP"
 WSL_IP=$(hostname -I | awk '{print $1}')
 echo "  WSL2 IP: $WSL_IP"
 
-# 检查 Streamlit 状态
+# 检查 Web 服务状态
 echo ""
-echo "🔍 检查 Streamlit 状态..."
-if pgrep -f "streamlit run" > /dev/null; then
-    echo "  ✅ Streamlit 正在运行"
+echo "🔍 检查 Web 服务状态..."
+if pgrep -f "uvicorn api.main" > /dev/null; then
+    echo "  ✅ React SPA + FastAPI 正在运行"
 else
-    echo "  ❌ Streamlit 未运行"
-    echo "  启动命令: streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true"
+    echo "  ❌ Web 服务未运行"
+    echo "  启动命令: python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8501"
 fi
 
 # 检查端口监听

@@ -17,7 +17,7 @@ netsh interface portproxy add v4tov4 listenport=8501 listenaddress=0.0.0.0 conne
 
 # 配置防火墙
 Write-Host "配置防火墙..." -ForegroundColor Green
-netsh advfirewall firewall add rule name="Streamlit 8501" dir=in action=allow protocol=TCP localport=8501
+netsh advfirewall firewall add rule name="Personal Profile 8501" dir=in action=allow protocol=TCP localport=8501
 
 # 验证
 Write-Host ""

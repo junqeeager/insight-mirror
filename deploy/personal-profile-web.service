@@ -1,12 +1,13 @@
 [Unit]
-Description=Personal Profile Streamlit Dashboard
+Description=Personal Profile React SPA + FastAPI
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=/home/junqeeager/aicode
-ExecStart=/usr/bin/python3 -m streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+ExecStart=/usr/bin/python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8501
+Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=5
 

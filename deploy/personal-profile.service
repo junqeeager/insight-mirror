@@ -1,12 +1,12 @@
 [Unit]
-Description=Personal Profile System (Streamlit + Cloudflare Tunnel)
+Description=Personal Profile System (React SPA + FastAPI + Cloudflare Tunnel)
 After=network.target
 
 [Service]
 Type=simple
 User=junqeeager
 WorkingDirectory=/home/junqeeager/aicode
-ExecStartPre=/bin/bash -c 'pgrep -f "streamlit run" || /usr/bin/python3 -m streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true'
+ExecStartPre=/bin/bash -c 'pgrep -f "uvicorn api.main" || /usr/bin/python3 -m uvicorn api.main:app --host 0.0.0.0 --port 8501'
 # 推荐改用 deploy/personal-profile-web.service + deploy/personal-profile-tunnel.service（用户级 systemd）
 ExecStart=/home/junqeeager/.local/bin/cloudflared tunnel run personal-profile
 Restart=always

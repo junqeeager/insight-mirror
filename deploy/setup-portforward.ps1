@@ -18,7 +18,7 @@ Write-Host "  WSL2 IP: $wslIP" -ForegroundColor Green
 Write-Host ""
 Write-Host "清理旧规则..." -ForegroundColor Yellow
 netsh interface portproxy delete v4tov4 listenport=8501 listenaddress=0.0.0.0 2>$null
-netsh advfirewall firewall delete rule name="Streamlit 8501" 2>$null
+netsh advfirewall firewall delete rule name="Personal Profile 8501" 2>$null
 
 # 添加端口转发
 Write-Host ""
@@ -27,7 +27,7 @@ netsh interface portproxy add v4tov4 listenport=8501 listenaddress=0.0.0.0 conne
 
 # 添加防火墙规则
 Write-Host "配置防火墙规则..." -ForegroundColor Yellow
-netsh advfirewall firewall add rule name="Streamlit 8501" dir=in action=allow protocol=TCP localport=8501
+netsh advfirewall firewall add rule name="Personal Profile 8501" dir=in action=allow protocol=TCP localport=8501
 
 # 验证配置
 Write-Host ""
@@ -40,7 +40,7 @@ netsh interface portproxy show all | Select-String "8501"
 
 Write-Host ""
 Write-Host "防火墙规则:" -ForegroundColor Yellow
-netsh advfirewall firewall show rule name="Streamlit 8501" | Select-String "Rule Name|Enabled|Action"
+netsh advfirewall firewall show rule name="Personal Profile 8501" | Select-String "Rule Name|Enabled|Action"
 
 # 获取公网IP
 Write-Host ""

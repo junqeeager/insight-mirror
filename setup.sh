@@ -28,6 +28,16 @@ echo "📦 安装 Python 依赖..."
 pip3 install --user --break-system-packages -r requirements.txt 2>/dev/null || \
 pip3 install --user -r requirements.txt
 
+# 安装 React SPA 前端依赖并构建
+if command -v npm &> /dev/null; then
+  echo "📦 安装前端依赖..."
+  npm --prefix web install
+  echo "🏗️ 构建 React SPA..."
+  npm --prefix web run build
+else
+  echo "⚠️ 未找到 npm，跳过前端构建（需另行执行 npm --prefix web install && npm --prefix web run build）"
+fi
+
 # 安装 playwright（用于获取 Cookie）
 echo "📦 安装 playwright..."
 pip3 install --user --break-system-packages playwright 2>/dev/null || \
@@ -70,5 +80,5 @@ echo "  3. 同步数据:"
 echo "     python3 scripts/sync.py --source bilibili"
 echo ""
 echo "  4. 启动前端:"
-echo "     streamlit run frontend/app.py"
+echo "     make run-web   # 或 python3 -m uvicorn api.main:app --port 8501"
 echo ""

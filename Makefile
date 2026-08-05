@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: test test-api run-api run-web sync init-db
+.PHONY: test test-api run-api run-web run-web-dev build-web test-web sync init-db
 
 test:
 	$(PYTHON) tests/test_frontend_theme.py
@@ -24,4 +24,13 @@ run-api:
 	$(PYTHON) -m uvicorn api.main:app --host 0.0.0.0 --port 8502
 
 run-web:
-	$(PYTHON) -m streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0
+	$(PYTHON) -m uvicorn api.main:app --host 0.0.0.0 --port 8501
+
+run-web-dev:
+	cd web && npm run dev
+
+build-web:
+	npm --prefix web run build
+
+test-web:
+	npm --prefix web run test

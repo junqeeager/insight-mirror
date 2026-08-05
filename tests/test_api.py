@@ -85,8 +85,24 @@ _ALICE_TOKEN = _login("alice", "alice-pass-123")
 
 def test_health():
     r = client.get("/health")
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     assert r.json() == {"status": "ok"}
+
+
+def test_spa_served_and_fallback_when_dist_exists():
+    """React 构建产物存在时，同源托管 SPA 并提供浏览器路由回退。"""
+    from api.main import WEB_DIST
+
+    if not WEB_DIST.is_dir():
+        return
+    r = client.get("/")
+    assert r.status_code == 200
+    assert 'id="root"' in r.text
+    r = client.get("/time")
+    assert r.status_code == 200, r.text
+    assert 'id="root"' in r.text
+    r = client.get("/api/v1/definitely-not-found")
+    assert r.status_code == 404
 
 
 def test_unauthorized_returns_401():
