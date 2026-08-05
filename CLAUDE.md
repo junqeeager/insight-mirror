@@ -12,7 +12,7 @@
 - FastAPI 迁移已完成：API 层、多用户账号、SQLite/PostgreSQL 双后端、后台任务、报告与图谱均可用。
 - 生产部署正常：systemd 用户服务 `personal-profile-web.service` 在 :8501 同时托管 SPA 与 API，经 Cloudflare Tunnel 对外（公网 `https://t.506ikun.space`）。
 - YouTube 数据源（本交接的新功能）：OAuth2 自动同步喜欢/订阅 + Takeout 观看历史导入，插件、API、前端入口与离线测试已落地；首次使用前需配置 `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET`，并在 Google 控制台把 `{app.public_url}/api/v1/sources/youtube/callback` 登记为授权回调地址（服务端换 token，不依赖前端）。
-- YouTube 自动导出观看历史：设置页“自动获取观看历史”一键触发后台任务（`takeout_export`），通过 Takeout 内部接口创建只含观看历史的导出、轮询、下载 zip、解析并幂等导入；30 分钟冷却、运行中/冷却中返回 409，失败原因与进度实时回显。接口非官方，若 Google 改版或拒绝，任务会给出可读错误并保留手动上传兜底。
+- YouTube 自动导出观看历史：设置页“自动获取观看历史”一键触发后台任务（`takeout_export`），通过 `takeout-pa.googleapis.com` 内部 API 创建 YouTube 导出、轮询、下载 zip/tgz、解析并幂等导入；运行中/短时冷却返回 409，失败原因与进度实时回显。该 API 要求 OAuth 含 `drive.readonly` scope（2026-08 实测 Bearer 可识别，仅缺 scope 时返回 403）；若 Google 改版或拒绝，任务会给出可读错误并保留手动上传兜底。
 
 ## 目录地图
 

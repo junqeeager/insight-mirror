@@ -1,16 +1,22 @@
-"""Google Takeout 自动导出（非官方内部接口）
+"""Google Takeout 自动导出（takeout-pa 内部 API）
 
-Takeout 网页端通过内部接口创建/轮询“只含 YouTube 观看历史”的批量导出。
-Google 未公开此接口，字段可能随网页改版变化，因此本模块集中处理请求构造与
-响应解析，并把鉴权失败、格式变化翻译成可读错误；若 Google 拒绝自动导出，
-用户仍可退回“导入观看历史（Takeout JSON）”手动上传。
+Takeout 的“创建导出/查询状态/下载归档”走的是 Google 内部 API：
 
-说明：2026-08 实测前的字段以 Takeout 网页端抓包整理为准，若 Google 改版，
-只需调整 CREATE_BATCH_PAYLOAD 与解析函数，无需改动后台任务与前端。
+    POST /v2/{service}/exports      -> 创建导出任务（返回 exportJob.id）
+    GET  /v2/{service}/exports/{id} -> 查询状态与归档下载地址
+
+该 API 接受 OAuth Bearer token，但要求 `drive.readonly` scope
+（Google 把 Takeout 归档视为云端硬盘数据）。2026-08 实测：端点存在、
+token 可识别，缺 scope 时返回 403；加上该 scope 后即可后台全自动创建
+YouTube 导出 → 轮询 → 下载 zip/tgz → 解析 watch-history.json。
+
+接口非公开，字段以 Google Discovery 文档（takeout-pa）为准；若 Google
+改版，只需调整本模块的请求体与解析函数。
 """
 
 import json
 import shutil
+import tarfile
 import tempfile
 import time
 import zipfile
@@ -19,45 +25,23 @@ from typing import Callable, List, Optional
 
 import httpx
 
-TAKEOUT_BASE = "https://takeout.google.com/takeout/v1"
+TAKEOUT_PA_BASE = "https://takeout-pa.googleapis.com/v2"
+DEFAULT_SERVICE = "youtube"
 DEFAULT_POLL_INTERVAL_SECONDS = 15
 DEFAULT_POLL_TIMEOUT_SECONDS = 30 * 60
 DEFAULT_MAX_ARCHIVE_MB = 200
 DEFAULT_MAX_TOTAL_MB = 1024
 
-# 创建导出时的请求体。字段含义：
-#   serviceIds / selectedDataToInclude —— 只导出 YouTube；
-#   dataToInclude[].selectedProductIds —— 只导出观看历史（watch-history.json）；
-#   deliveryMethod DOWNLOAD —— 下载 zip 而非发邮件/存网盘；
-#   fileSize —— 单个压缩包上限，超过会分卷。
-CREATE_BATCH_PAYLOAD = {
-    "batch": {
-        "exportTargetType": "THIRD_PARTY",
-        "serviceIds": ["youtube"],
-        "selectedDataToInclude": ["youtube"],
-        "dataToInclude": [
-            {
-                "serviceId": "youtube",
-                "selectedProductIds": ["youtube_history"],
-            }
-        ],
-        "deliveryMethod": "DOWNLOAD",
-        "fileType": "ZIP",
-        "fileSize": "200MB",
-        "notifyEmail": False,
-    }
-}
-
 IN_PROGRESS_STATUSES = {
-    "PROCESSING",
-    "QUEUED",
-    "CREATED",
-    "PENDING",
-    "BUILDING",
-    "COUNTING",
     "UNKNOWN",
+    "QUEUED",
+    "COUNTING",
+    "BUILDING",
+    "PROCESSING",
+    "PENDING",
+    "CREATED",
 }
-DONE_STATUSES = {"COMPLETED", "SUCCEEDED", "DONE", "READY"}
+DONE_STATUSES = {"SUCCEEDED", "COMPLETED", "DONE", "READY"}
 FAILED_STATUSES = {"FAILED", "CANCELLED", "CANCELED", "ERROR"}
 
 ProgressCallback = Callable[[str], None]
@@ -68,11 +52,11 @@ class TakeoutError(RuntimeError):
 
 
 class TakeoutAuthError(TakeoutError):
-    """Google 拒绝访问 Takeout（token 失效或需要浏览器会话）。"""
+    """Google 拒绝访问（scope 不足或 token 失效）。"""
 
 
 class TakeoutFormatError(TakeoutError):
-    """Takeout 接口返回格式与预期不符（Google 改版或端点错误）。"""
+    """Takeout 返回格式与预期不符（接口改版或参数错误）。"""
 
 
 class TakeoutExportFailed(TakeoutError):
@@ -84,11 +68,12 @@ def _noop_progress(_message: str) -> None:
 
 
 class TakeoutExporter:
-    """创建并下载只含 YouTube 观看历史的 Takeout 导出。"""
+    """通过 takeout-pa 内部 API 创建并下载 YouTube Takeout 导出。"""
 
     def __init__(
         self,
         access_token: str,
+        service: str = DEFAULT_SERVICE,
         max_archive_mb: int = DEFAULT_MAX_ARCHIVE_MB,
         max_total_mb: int = DEFAULT_MAX_TOTAL_MB,
         poll_interval: int = DEFAULT_POLL_INTERVAL_SECONDS,
@@ -96,6 +81,7 @@ class TakeoutExporter:
         client: Optional[httpx.Client] = None,
     ):
         self.access_token = access_token
+        self.service = service
         self.max_archive_bytes = max(1, int(max_archive_mb)) * 1024 * 1024
         self.max_total_bytes = max(1, int(max_total_mb)) * 1024 * 1024
         self.poll_interval = max(0, int(poll_interval))
@@ -112,23 +98,34 @@ class TakeoutExporter:
         return {
             "Authorization": f"Bearer {self.access_token}",
             "Accept": "application/json",
-            "Origin": "https://takeout.google.com",
-            "Referer": "https://takeout.google.com/",
+            "Content-Type": "application/json",
         }
 
     def _raise_for_auth(self, resp: httpx.Response) -> None:
         """把鉴权失败翻译成可读错误。"""
         if resp.status_code in (401, 403):
+            message = ""
+            try:
+                message = (
+                    (resp.json().get("error") or {}).get("message") or ""
+                )
+            except (json.JSONDecodeError, ValueError):
+                pass
+            if "scope" in message.lower() or "scopes" in message.lower():
+                raise TakeoutAuthError(
+                    "缺少 Google 云端硬盘读取权限（takeout-pa 需要 "
+                    "drive.readonly）。请在设置页重新连接 YouTube 授权一次。"
+                )
             raise TakeoutAuthError(
                 "Google 拒绝访问 Takeout（HTTP "
-                f"{resp.status_code}）。请重新连接 YouTube 授权后重试；"
-                "若仍失败，可改用“导入观看历史（Takeout JSON）”手动上传。"
+                f"{resp.status_code}）：{message or '未知原因'}。"
+                "请重新连接 YouTube 授权后重试。"
             )
         content_type = (resp.headers.get("content-type") or "").lower()
-        if "text/html" in content_type or "login" in content_type:
+        if "text/html" in content_type:
             raise TakeoutAuthError(
-                "Takeout 返回了登录页，自动导出需要 Google 浏览器会话。"
-                "请重新连接 YouTube 授权后重试，或使用手动上传。"
+                "Takeout 返回了网页而不是 API 响应，接口可能已改版。"
+                "请稍后重试，或使用手动上传。"
             )
 
     @staticmethod
@@ -136,21 +133,47 @@ class TakeoutExporter:
         try:
             data = resp.json()
         except (json.JSONDecodeError, ValueError):
-            raise TakeoutFormatError(
-                "Takeout 返回的不是 JSON（可能是登录页或接口已改版）"
-            )
+            raise TakeoutFormatError("Takeout 返回的不是 JSON")
         if not isinstance(data, dict):
             raise TakeoutFormatError("Takeout 返回格式异常（应为 JSON 对象）")
         return data
 
+    @staticmethod
+    def _unwrap_export_job(data: dict) -> dict:
+        """兼容 exportJob 包装层，返回导出任务本体。"""
+        job = data.get("exportJob") or data
+        return job if isinstance(job, dict) else data
+
+    @staticmethod
+    def _error_message(data: dict) -> str:
+        """从 Errors 或错误字段中提取简短原因。"""
+        errors = data.get("errors") or {}
+        if isinstance(errors, dict):
+            for item in errors.get("error") or []:
+                if isinstance(item, dict) and item.get("externalErrorMessage"):
+                    return str(item["externalErrorMessage"])
+            if errors.get("code"):
+                return f"{errors.get('code')}: {errors.get('requestId', '')}"
+        for key in ("failReason", "debugFailureInfo", "message"):
+            if data.get(key):
+                return str(data[key])
+        return ""
+
     # ---------- 创建与轮询 ----------
 
-    def create_batch(self) -> str:
-        """创建只含 YouTube 观看历史的导出，返回批次 ID。"""
+    def create_export(self) -> str:
+        """创建只含 YouTube 服务的导出任务，返回导出任务 ID。"""
+        body = {
+            "service": self.service,
+            "items": [],
+            "locale": "zh-CN",
+            "initiatingClientService": "TAKEOUT_INTERNAL",
+            "archivePrefix": "takeout",
+        }
         try:
             resp = self.client.post(
-                f"{TAKEOUT_BASE}/batches",
-                json=CREATE_BATCH_PAYLOAD,
+                f"{TAKEOUT_PA_BASE}/{self.service}/exports",
+                json=body,
                 headers=self._headers(),
             )
         except httpx.HTTPError as exc:
@@ -162,31 +185,32 @@ class TakeoutExporter:
                 f"{resp.text[:300]}"
             )
         data = self._json(resp)
-        batch_id = (
-            data.get("batchId")
-            or data.get("batch_id")
+        job = self._unwrap_export_job(data)
+        export_id = (
+            job.get("id")
+            or job.get("exportId")
+            or data.get("exportJobId")
             or data.get("id")
-            or (data.get("batch") or {}).get("id")
         )
-        if not batch_id:
+        if not export_id:
             raise TakeoutFormatError(
-                "Takeout 返回中未找到导出批次 ID，接口格式可能已变化"
+                "Takeout 返回中未找到导出任务 ID，接口格式可能已变化"
             )
-        return str(batch_id)
+        return str(export_id)
 
     def poll_until_ready(
         self,
-        batch_id: str,
+        export_id: str,
         progress: Optional[ProgressCallback] = None,
     ) -> dict:
-        """轮询批次状态，直到 COMPLETED 或失败；返回完成时的完整响应。"""
+        """轮询导出状态直到 SUCCEEDED/FAILED；返回完成时的完整响应。"""
         progress = progress or _noop_progress
         deadline = time.monotonic() + self.poll_timeout
         waited = 0
         while True:
             try:
                 resp = self.client.get(
-                    f"{TAKEOUT_BASE}/batches/{batch_id}",
+                    f"{TAKEOUT_PA_BASE}/{self.service}/exports/{export_id}",
                     headers=self._headers(),
                 )
             except httpx.HTTPError as exc:
@@ -201,21 +225,14 @@ class TakeoutExporter:
                     f"查询 Takeout 导出状态失败（HTTP {resp.status_code}）"
                 )
             data = self._json(resp)
-            status = str(data.get("status") or "").upper()
+            job = self._unwrap_export_job(data)
+            status = str(job.get("status") or "").upper()
             if status in DONE_STATUSES:
                 return data
             if status in FAILED_STATUSES:
-                reason = (
-                    data.get("failReason")
-                    or data.get("error")
-                    or data.get("message")
-                    or "未知原因"
-                )
+                reason = self._error_message(job) or "未知原因"
                 raise TakeoutExportFailed(f"Google 导出任务失败：{reason}")
-            if status and status not in IN_PROGRESS_STATUSES:
-                # 遇到未知状态先按处理中处理，避免误判失败
-                pass
-            percent = data.get("percentDone")
+            percent = data.get("percentDone") or job.get("percentDone")
             percent_text = f"（{percent}%）" if percent is not None else ""
             progress(
                 f"等待 Google 打包导出{percent_text}…已等待 {waited} 秒，"
@@ -234,13 +251,14 @@ class TakeoutExporter:
 
     def download_archives(
         self,
-        batch_data: dict,
+        export_data: dict,
         target_dir: Path,
         progress: Optional[ProgressCallback] = None,
     ) -> List[Path]:
-        """下载所有分卷压缩包到 target_dir，返回本地文件路径列表。"""
+        """下载所有分卷归档到 target_dir，返回本地文件路径列表。"""
         progress = progress or _noop_progress
-        urls = self._extract_download_urls(batch_data)
+        job = self._unwrap_export_job(export_data)
+        urls = self._extract_download_urls(job)
         if not urls:
             raise TakeoutFormatError(
                 "Takeout 导出已完成但响应中没有下载地址，接口格式可能已变化"
@@ -250,7 +268,7 @@ class TakeoutExporter:
         total_bytes = 0
         for index, url in enumerate(urls, start=1):
             if url.startswith("/"):
-                url = f"https://takeout.google.com{url}"
+                url = f"https://takeout-pa.googleapis.com{url}"
             try:
                 with self.client.stream(
                     "GET", url, headers=self._headers()
@@ -258,10 +276,9 @@ class TakeoutExporter:
                     self._raise_for_auth(resp)
                     if resp.status_code >= 400:
                         raise TakeoutError(
-                            f"下载 Takeout 压缩包失败（HTTP {resp.status_code}）"
+                            f"下载 Takeout 归档失败（HTTP {resp.status_code}）"
                         )
-                    filename = f"takeout-part-{index}.zip"
-                    dest = target_dir / filename
+                    dest = target_dir / f"takeout-part-{index}.zip"
                     size = 0
                     with dest.open("wb") as handle:
                         for chunk in resp.iter_bytes(1024 * 1024):
@@ -269,23 +286,23 @@ class TakeoutExporter:
                             total_bytes += len(chunk)
                             if size > self.max_archive_bytes:
                                 raise TakeoutError(
-                                    "单个 Takeout 压缩包超过 "
+                                    "单个 Takeout 归档超过 "
                                     f"{self.max_archive_bytes // (1024 * 1024)}MB"
                                     " 上限，无法自动导入"
                                 )
                             if total_bytes > self.max_total_bytes:
                                 raise TakeoutError(
-                                    "Takeout 压缩包总大小超过 1GB 上限，"
+                                    "Takeout 归档总大小超过 1GB 上限，"
                                     "无法自动导入；可尝试手动上传"
                                 )
                             handle.write(chunk)
                     paths.append(dest)
                     progress(
-                        f"已下载第 {index}/{len(urls)} 个压缩包"
+                        f"已下载第 {index}/{len(urls)} 个归档"
                         f"（{size / (1024 * 1024):.1f}MB）"
                     )
             except httpx.HTTPError as exc:
-                raise TakeoutError(f"下载 Takeout 压缩包失败: {exc}")
+                raise TakeoutError(f"下载 Takeout 归档失败: {exc}")
         return paths
 
     @staticmethod
@@ -302,48 +319,77 @@ class TakeoutExporter:
         for key in ("downloadUrls", "download_urls"):
             for value in data.get(key) or []:
                 add(value)
-        for group in ("files", "archives", "parts", "items"):
+        for group in ("archives", "files", "parts", "items"):
             for item in data.get(group) or []:
                 if not isinstance(item, dict):
                     continue
                 for key in (
+                    "storagePath",
+                    "storage_path",
                     "downloadUrl",
                     "download_url",
                     "url",
                     "href",
-                    "storagePath",
-                    "storage_path",
                 ):
                     add(item.get(key))
         return urls
 
     @staticmethod
     def extract_watch_history(archive_paths: List[Path]) -> list:
-        """从压缩包中定位 watch-history.json 并合并为 JSON 数组。"""
+        """从 zip/tgz 中定位 watch-history.json 并合并为 JSON 数组。"""
         payload: list = []
         for archive in archive_paths:
-            try:
+            payload.extend(TakeoutExporter._read_archive(archive))
+        return payload
+
+    @staticmethod
+    def _read_archive(archive: Path) -> list:
+        """读取单个归档中的 watch-history.json（zip 或 tgz）。"""
+        entries: list = []
+        try:
+            if zipfile.is_zipfile(archive):
                 with zipfile.ZipFile(archive) as zf:
                     candidates = [
                         name
                         for name in zf.namelist()
                         if name.lower().endswith("watch-history.json")
                     ]
-                    if not candidates:
-                        continue
                     candidates.sort(key=len, reverse=True)
                     for name in candidates:
                         raw = zf.read(name)
-                        try:
-                            data = json.loads(raw.decode("utf-8"))
-                        except (UnicodeDecodeError, json.JSONDecodeError):
-                            continue
-                        if isinstance(data, list):
-                            payload.extend(data)
+                        data = TakeoutExporter._decode_json(raw)
+                        if data is not None:
+                            entries.extend(data)
                             break
-            except (zipfile.BadZipFile, OSError):
-                continue
-        return payload
+            else:
+                with tarfile.open(archive, "r:*") as tf:
+                    candidates = [
+                        member
+                        for member in tf.getmembers()
+                        if member.isfile()
+                        and member.name.lower().endswith("watch-history.json")
+                    ]
+                    candidates.sort(key=lambda m: len(m.name), reverse=True)
+                    for member in candidates:
+                        raw = tf.extractfile(member)
+                        if raw is None:
+                            continue
+                        data = TakeoutExporter._decode_json(raw.read())
+                        if data is not None:
+                            entries.extend(data)
+                            break
+        except (zipfile.BadZipFile, tarfile.TarError, OSError):
+            return []
+        return entries
+
+    @staticmethod
+    def _decode_json(raw: bytes) -> Optional[list]:
+        """解析 watch-history.json 内容；不是 JSON 数组时返回 None。"""
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return data if isinstance(data, list) else None
 
     def close(self) -> None:
         """释放本模块创建的 HTTP 客户端。"""

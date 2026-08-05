@@ -37,7 +37,7 @@ from plugins.youtube.takeout import (
 router = APIRouter(prefix="/api/v1/sources/youtube", tags=["youtube"])
 
 OAUTH_TTL_MINUTES = 10
-TAKEOUT_COOLDOWN_MINUTES = 30
+TAKEOUT_COOLDOWN_MINUTES = 5
 logger = logging.getLogger("api.youtube")
 
 
@@ -214,14 +214,14 @@ def _takeout_run(user_id: str, config: dict):
                 max_total_mb=plugin.takeout_max_total_mb,
             )
             progress("正在向 Google Takeout 提交导出请求…")
-            batch_id = exporter.create_batch()
+            export_id = exporter.create_export()
             progress(
-                f"导出任务已创建（{batch_id}），等待 Google 打包，"
+                f"导出任务已创建（{export_id}），等待 Google 打包，"
                 "通常需要几分钟…"
             )
-            batch_data = exporter.poll_until_ready(batch_id, progress)
+            export_data = exporter.poll_until_ready(export_id, progress)
             temp_dir = make_temp_dir("takeout-export-")
-            archives = exporter.download_archives(batch_data, temp_dir, progress)
+            archives = exporter.download_archives(export_data, temp_dir, progress)
             progress("正在解压并解析观看历史…")
             payload = exporter.extract_watch_history(archives)
             events = plugin.parse_takeout(payload)
@@ -234,7 +234,7 @@ def _takeout_run(user_id: str, config: dict):
                 "received": len(payload),
                 "parsed": len(events),
                 "imported": imported,
-                "batch_id": batch_id,
+                "batch_id": export_id,
             }
         finally:
             if exporter is not None:

@@ -1,6 +1,7 @@
 """YouTube 数据源插件
 
-- OAuth2（youtube.readonly + 基础身份）自动同步“喜欢的视频”与“订阅频道”；
+- OAuth2（youtube.readonly + drive.readonly + 基础身份）自动同步“喜欢的视频”
+  与“订阅频道”；
 - Google Takeout 导出的 watch-history.json 手动导入真实观看历史
   （YouTube Data API v3 不开放第三方读取观看历史）；
 - 自动向 Google Takeout 请求只含观看历史的导出并导入（见 takeout.py）。
@@ -22,6 +23,7 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 API_BASE = "https://www.googleapis.com/youtube/v3"
 SCOPE = (
     "https://www.googleapis.com/auth/youtube.readonly "
+    "https://www.googleapis.com/auth/drive.readonly "
     "openid profile email"
 )
 OAUTH_TTL = timedelta(minutes=10)

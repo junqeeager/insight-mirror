@@ -3,6 +3,7 @@
 import io
 import json
 import sys
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -48,11 +49,24 @@ def _zip_bytes(entries: list) -> bytes:
     return buffer.getvalue()
 
 
+def _tgz_bytes(entries: list) -> bytes:
+    """把 JSON 数组打包成 Takeout 目录结构的 tgz。"""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tf:
+        raw = json.dumps(entries).encode("utf-8")
+        info = tarfile.TarInfo(
+            "Takeout/YouTube and YouTube Music/history/watch-history.json"
+        )
+        info.size = len(raw)
+        tf.addfile(info, io.BytesIO(raw))
+    return buffer.getvalue()
+
+
 def _make_client(
     *,
-    create_batch_id: str = "batch-1",
+    export_id: str = "export-1",
     poll_count: int = 1,
-    final_status: str = "COMPLETED",
+    final_status: str = "SUCCEEDED",
     fail_reason: str = "",
     archive_bytes: bytes | None = None,
     create_status: int = 200,
@@ -63,21 +77,34 @@ def _make_client(
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
-        if request.method == "POST" and url.endswith("/takeout/v1/batches"):
+        if request.method == "POST" and url.endswith(
+            "/v2/youtube/exports"
+        ):
             if create_status != 200:
-                return httpx.Response(create_status, text="denied")
+                return httpx.Response(
+                    create_status,
+                    json={
+                        "error": {
+                            "code": create_status,
+                            "message": "Request had insufficient "
+                            "authentication scopes.",
+                        }
+                    },
+                )
             return httpx.Response(
                 200,
-                json={"batchId": create_batch_id, "status": "PROCESSING"},
+                json={"exportJob": {"id": export_id, "status": "QUEUED"}},
             )
-        if request.method == "GET" and "/takeout/v1/batches/" in url:
+        if request.method == "GET" and f"/exports/{export_id}" in url:
             state["polls"] += 1
             if state["polls"] <= poll_count:
                 return httpx.Response(
                     200,
                     json={
-                        "batchId": create_batch_id,
-                        "status": "PROCESSING",
+                        "exportJob": {
+                            "id": export_id,
+                            "status": "BUILDING",
+                        },
                         "percentDone": 42,
                     },
                 )
@@ -85,22 +112,28 @@ def _make_client(
                 return httpx.Response(
                     200,
                     json={
-                        "batchId": create_batch_id,
-                        "status": "FAILED",
-                        "failReason": fail_reason or "内部错误",
+                        "exportJob": {
+                            "id": export_id,
+                            "status": "FAILED",
+                            "debugFailureInfo": fail_reason or "内部错误",
+                        }
                     },
                 )
             return httpx.Response(
                 200,
                 json={
-                    "batchId": create_batch_id,
-                    "status": "COMPLETED",
-                    "files": [
-                        {
-                            "fileName": "takeout.zip",
-                            "downloadUrl": "https://takeout.example.com/a.zip",
-                        }
-                    ],
+                    "exportJob": {
+                        "id": export_id,
+                        "status": "SUCCEEDED",
+                        "archives": [
+                            {
+                                "fileName": "takeout.zip",
+                                "storagePath": (
+                                    "https://takeout.example.com/a.zip"
+                                ),
+                            }
+                        ],
+                    }
                 },
             )
         if url.startswith("https://takeout.example.com/"):
@@ -129,21 +162,21 @@ def _exporter(**overrides) -> TakeoutExporter:
     return TakeoutExporter(**params)
 
 
-def test_create_batch_returns_id():
+def test_create_export_returns_id():
     exporter = _exporter(client=_make_client())
-    assert exporter.create_batch() == "batch-1"
+    assert exporter.create_export() == "export-1"
     exporter.close()
 
 
-def test_create_batch_missing_id_raises_format_error():
+def test_create_export_missing_id_raises_format_error():
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"status": "PROCESSING"})
+        return httpx.Response(200, json={"status": "QUEUED"})
 
     exporter = _exporter(
         client=httpx.Client(transport=httpx.MockTransport(handler))
     )
     try:
-        exporter.create_batch()
+        exporter.create_export()
         assert False, "应抛出 TakeoutFormatError"
     except TakeoutFormatError:
         pass
@@ -151,26 +184,27 @@ def test_create_batch_missing_id_raises_format_error():
         exporter.close()
 
 
-def test_create_batch_unauthorized_raises_auth_error():
+def test_create_export_missing_scope_raises_auth_error():
     exporter = _exporter(client=_make_client(create_status=403))
     try:
-        exporter.create_batch()
+        exporter.create_export()
         assert False, "应抛出 TakeoutAuthError"
     except TakeoutAuthError as exc:
+        assert "云端硬盘" in str(exc)
         assert "重新连接" in str(exc)
     finally:
         exporter.close()
 
 
-def test_poll_waits_until_completed_and_reports_progress():
+def test_poll_waits_until_succeeded_and_reports_progress():
     exporter = _exporter(client=_make_client(poll_count=2))
     messages = []
 
     def progress(message: str):
         messages.append(message)
 
-    data = exporter.poll_until_ready("batch-1", progress)
-    assert data["status"] == "COMPLETED"
+    data = exporter.poll_until_ready("export-1", progress)
+    assert data["exportJob"]["status"] == "SUCCEEDED"
     assert any("42%" in message for message in messages)
     assert any("等待" in message for message in messages)
     exporter.close()
@@ -181,7 +215,7 @@ def test_poll_failed_status_raises_export_failed():
         client=_make_client(final_status="FAILED", fail_reason="磁盘不足")
     )
     try:
-        exporter.poll_until_ready("batch-1")
+        exporter.poll_until_ready("export-1")
         assert False, "应抛出 TakeoutExportFailed"
     except TakeoutExportFailed as exc:
         assert "磁盘不足" in str(exc)
@@ -196,7 +230,7 @@ def test_poll_timeout_raises():
         poll_interval=0,
     )
     try:
-        exporter.poll_until_ready("batch-1")
+        exporter.poll_until_ready("export-1")
         assert False, "应抛出 TakeoutError"
     except TakeoutError as exc:
         assert "超时" in str(exc)
@@ -204,11 +238,11 @@ def test_poll_timeout_raises():
         exporter.close()
 
 
-def test_download_and_extract_watch_history():
+def test_download_and_extract_watch_history_zip():
     exporter = _exporter(client=_make_client())
     temp_dir = make_temp_dir()
     try:
-        data = exporter.poll_until_ready("batch-1")
+        data = exporter.poll_until_ready("export-1")
         archives = exporter.download_archives(data, temp_dir)
         assert len(archives) == 1
         payload = exporter.extract_watch_history(archives)
@@ -219,6 +253,21 @@ def test_download_and_extract_watch_history():
     assert not temp_dir.exists()
 
 
+def test_extract_watch_history_tgz():
+    exporter = _exporter(
+        client=_make_client(archive_bytes=_tgz_bytes(WATCH_PAYLOAD))
+    )
+    temp_dir = make_temp_dir()
+    try:
+        data = exporter.poll_until_ready("export-1")
+        archives = exporter.download_archives(data, temp_dir)
+        payload = exporter.extract_watch_history(archives)
+        assert payload == WATCH_PAYLOAD
+    finally:
+        remove_temp_dir(temp_dir)
+        exporter.close()
+
+
 def test_download_too_large_raises():
     exporter = _exporter(
         client=_make_client(archive_bytes=b"x" * (2 * 1024 * 1024)),
@@ -226,7 +275,7 @@ def test_download_too_large_raises():
     )
     temp_dir = make_temp_dir()
     try:
-        data = exporter.poll_until_ready("batch-1")
+        data = exporter.poll_until_ready("export-1")
         exporter.download_archives(data, temp_dir)
         assert False, "应抛出 TakeoutError"
     except TakeoutError as exc:
@@ -240,7 +289,7 @@ def test_download_unauthorized_raises_auth_error():
     exporter = _exporter(client=_make_client(download_status=403))
     temp_dir = make_temp_dir()
     try:
-        data = exporter.poll_until_ready("batch-1")
+        data = exporter.poll_until_ready("export-1")
         exporter.download_archives(data, temp_dir)
         assert False, "应抛出 TakeoutAuthError"
     except TakeoutAuthError:
@@ -250,15 +299,15 @@ def test_download_unauthorized_raises_auth_error():
         exporter.close()
 
 
-def test_extract_skips_bad_zip_and_merges_payloads():
+def test_extract_skips_bad_archive_and_merges_payloads():
     first = _zip_bytes(WATCH_PAYLOAD[:1])
     second = _zip_bytes(WATCH_PAYLOAD[1:])
-    bad = Path(make_temp_dir()) / "bad.zip"
-    bad.write_bytes(b"not-a-zip")
-    good1 = Path(make_temp_dir()) / "good1.zip"
-    good2 = Path(make_temp_dir()) / "good2.zip"
+    bad = make_temp_dir() / "bad.zip"
+    bad.write_bytes(b"not-an-archive")
+    good1 = make_temp_dir() / "good1.zip"
+    good2 = make_temp_dir() / "good2.tgz"
     good1.write_bytes(first)
-    good2.write_bytes(second)
+    good2.write_bytes(_tgz_bytes(WATCH_PAYLOAD[1:]))
     try:
         payload = TakeoutExporter.extract_watch_history([bad, good1, good2])
         assert payload == WATCH_PAYLOAD

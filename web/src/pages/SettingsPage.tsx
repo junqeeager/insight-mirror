@@ -557,7 +557,7 @@ export function SettingsPage() {
         ?.response?.data?.detail;
       setError(
         status === 409
-          ? "已有自动导出任务在进行，请稍后再试"
+          ? detail || "已有自动导出任务在进行，请稍后再试"
           : detail ?? "自动导出启动失败",
       );
     }
@@ -826,8 +826,10 @@ export function SettingsPage() {
                       </div>
                     )}
                     <p className="muted">
-                      喜欢/订阅在连接后自动同步；点击“自动获取观看历史”由后台向
-                      Google Takeout 请求完整观看历史并导入，也可手动上传
+                      喜欢/订阅在连接后自动同步；点击“自动获取观看历史”由后台
+                      直接向 Google 创建 Takeout 导出并导入完整观看历史
+                      （打包通常需要几分钟）。此功能需先重新连接一次 YouTube
+                      授权（新增云端硬盘只读权限），也可手动上传
                       watch-history.json。
                     </p>
                   </div>

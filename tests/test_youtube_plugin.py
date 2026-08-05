@@ -120,6 +120,7 @@ def test_build_auth_url_includes_pkce():
     assert "code_challenge=" in url
     assert "openid" in url
     assert "youtube.readonly" in url
+    assert "drive.readonly" in url
     assert "code_challenge_method=S256" in url
     assert "state=state-1" in url
     assert "access_type=offline" in url

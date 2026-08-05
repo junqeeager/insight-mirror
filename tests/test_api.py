@@ -609,10 +609,10 @@ def test_youtube_takeout_export_task_lifecycle():
             self.kwargs = kwargs
             self.closed = False
 
-        def create_batch(self):
+        def create_export(self):
             return "batch-api-test"
 
-        def poll_until_ready(self, batch_id, progress=None):
+        def poll_until_ready(self, export_id, progress=None):
             if progress:
                 progress("Google 打包完成")
             return {

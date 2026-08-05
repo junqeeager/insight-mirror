@@ -36,18 +36,19 @@ def start_task(
     params: dict,
     run,
     progress_factory=None,
+    task_id: str = None,
 ) -> str:
     """登记任务并提交线程池；同类 running 任务存在时抛 TaskConflictError。
 
     progress_factory(task_id) 可返回进度回调，run 在每步更新任务
-    result.message。
+    result.message；task_id 可选，用于让调用方在闭包里引用任务 ID。
     """
     db = _open_db()
     try:
         existing = db.get_running_task(user_id, kind)
         if existing:
             raise TaskConflictError(f"同类任务正在运行: {existing['id']}")
-        task_id = _new_task_id()
+        task_id = task_id or _new_task_id()
         try:
             db.create_task(task_id, user_id, kind, params)
         except IntegrityError:
@@ -92,6 +93,7 @@ def refresh_profile(period: str = "weekly", user_id: str = "") -> str:
 
 def sync_user_task(user_id: str, source: str = None) -> str:
     """后台同步某个用户的数据源，返回 task_id。"""
+    task_id = _new_task_id()
 
     def _run() -> dict:
         config = get_config()
@@ -120,7 +122,9 @@ def sync_user_task(user_id: str, source: str = None) -> str:
         finally:
             db.close()
 
-    return start_task(user_id, "sync", {"source": source}, _run)
+    return start_task(
+        user_id, "sync", {"source": source}, _run, task_id=task_id
+    )
 
 
 def takeout_export_progress(task_id: str):
