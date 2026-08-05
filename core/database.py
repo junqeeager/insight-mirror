@@ -15,6 +15,7 @@ from sqlalchemy import (
     delete,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     MetaData,
@@ -82,10 +83,16 @@ topics = Table(
 event_topics = Table(
     "event_topics",
     metadata,
-    Column("event_id", String, ForeignKey("events.id"), primary_key=True),
-    Column("topic_id", String, ForeignKey("topics.id"), primary_key=True),
+    Column("event_id", String, primary_key=True),
+    Column("topic_id", String, primary_key=True),
     Column("user_id", String, primary_key=True),
     Column("relevance", Float, default=1.0),
+    ForeignKeyConstraint(
+        ["event_id", "user_id"], ["events.id", "events.user_id"]
+    ),
+    ForeignKeyConstraint(
+        ["topic_id", "user_id"], ["topics.id", "topics.user_id"]
+    ),
     Index("idx_event_topics_topic", "topic_id"),
     Index("idx_event_topics_user", "user_id"),
 )
