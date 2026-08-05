@@ -12,10 +12,21 @@ import type {
   YouTubeTakeoutResult,
   YouTubeTokenResult,
 } from "../types";
+import { readStoredAuthToken } from "../auth/storage";
 
 export const api = axios.create({
   baseURL: "/api/v1",
   timeout: 15000,
+});
+
+api.interceptors.request.use((config) => {
+  if (!config.headers.Authorization) {
+    const token = readStoredAuthToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+  }
+  return config;
 });
 
 export const authApi = axios.create({

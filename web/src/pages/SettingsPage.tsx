@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   changePassword,
   deleteAccount,
@@ -116,6 +117,7 @@ function valuesToConfig(
 
 export function SettingsPage() {
   const { isAuthenticated, isAdmin, logout, requireAuth, user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [sources, setSources] = useState<SourceConfig[]>(mockSources);
   const [loadingSources, setLoadingSources] = useState(false);
   const [values, setValues] = useState<Record<string, Record<string, string>>>(() =>
@@ -199,9 +201,8 @@ export function SettingsPage() {
   }, [isAuthenticated, isAdmin]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get("youtube_code");
-    const state = params.get("youtube_state");
+    const code = searchParams.get("code");
+    const state = searchParams.get("state");
     if (!code || !state) return;
     setNotice("");
     setError("");
@@ -226,9 +227,9 @@ export function SettingsPage() {
         );
       })
       .finally(() => {
-        window.history.replaceState({}, "", window.location.pathname);
+        setSearchParams({}, { replace: true });
       });
-  }, []);
+  }, [searchParams, setSearchParams]);
 
   const updateValue = useCallback(
     (source: string, key: string, value: string) => {

@@ -18,8 +18,7 @@ import {
   setUnauthorizedHandler,
 } from "../api/client";
 import type { User } from "../types";
-
-const STORAGE_KEY = "personal_profile_auth";
+import { AUTH_STORAGE_KEY as STORAGE_KEY } from "./storage";
 
 interface StoredAuth {
   token: string;

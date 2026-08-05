@@ -85,6 +85,10 @@ beforeEach(() => {
   vi.mocked(client.fetchGraph).mockResolvedValue(mockGraph);
   vi.mocked(client.fetchLatestProfile).mockResolvedValue(mockProfile);
   vi.mocked(client.fetchSources).mockResolvedValue(mockSources);
+  vi.mocked(client.exchangeYouTubeToken).mockResolvedValue({
+    ok: true,
+    message: "YouTube 已连接",
+  });
   vi.mocked(client.fetchAdminUsers).mockResolvedValue(mockUsers);
   vi.mocked(client.startSync).mockResolvedValue({
     task_id: "task-abc",
@@ -139,6 +143,18 @@ describe("未登录公开预览", () => {
     expect(
       screen.getByLabelText("导入观看历史（Takeout JSON）"),
     ).toBeInTheDocument();
+  });
+
+  it("YouTube 授权回跳后自动换 token 并保持登录", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    renderRoute("/settings?code=the-code&state=the-state");
+    await waitFor(() =>
+      expect(client.exchangeYouTubeToken).toHaveBeenCalledWith(
+        "the-code",
+        "the-state",
+      ),
+    );
+    expect(await screen.findByText("YouTube 已连接")).toBeInTheDocument();
   });
 });
 
