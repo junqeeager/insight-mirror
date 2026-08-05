@@ -210,6 +210,34 @@ class SyncIn(BaseModel):
     source: Optional[str] = None
 
 
+class YouTubeAuthUrlOut(BaseModel):
+    """YouTube OAuth 授权地址"""
+
+    url: str
+
+
+class YouTubeTokenIn(BaseModel):
+    """YouTube 授权码回调请求"""
+
+    code: str
+    state: str
+
+
+class YouTubeTokenOut(BaseModel):
+    """YouTube 连接结果"""
+
+    ok: bool = True
+    message: str = ""
+
+
+class YouTubeTakeoutOut(BaseModel):
+    """YouTube Takeout 导入结果"""
+
+    received: int
+    parsed: int
+    imported: int
+
+
 class AdminUserPatch(BaseModel):
     """管理员更新用户请求"""
 

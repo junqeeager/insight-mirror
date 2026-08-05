@@ -93,7 +93,9 @@ def test_source(
         raise HTTPException(status_code=404, detail="未知数据源")
     saved = _saved_or_empty(db, user["id"], source)
     decrypted = decrypt_config(saved.get("config") or {})
-    sources = {source: {"enabled": True, "config": decrypted}}
+    global_cfg = dict(config.get("sources", {}).get(source, {}).get("config", {}) or {})
+    global_cfg.update(decrypted)
+    sources = {source: {"enabled": True, "config": global_cfg}}
     user_config = dict(config)
     user_config["sources"] = sources
     manager = PluginManager(config["system"]["plugins_dir"], user_config)

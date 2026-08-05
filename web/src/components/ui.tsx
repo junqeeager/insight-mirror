@@ -53,6 +53,7 @@ export function SourcePill({ source, count }: { source: string; count?: number }
     github: "GitHub",
     rss: "RSS",
     browser_history: "浏览器",
+    youtube: "YouTube",
   };
   return (
     <span className="source-pill">

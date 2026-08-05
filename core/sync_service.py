@@ -68,6 +68,11 @@ def sync_user(
     """同步某个用户的全部（或指定）已启用数据源。"""
     rows = db.list_source_configs(user_id)
     sources = build_user_sources(rows)
+    global_sources = config.get("sources", {})
+    for name, source_cfg in sources.items():
+        global_cfg = dict(global_sources.get(name, {}).get("config", {}) or {})
+        global_cfg.update(source_cfg.get("config", {}))
+        sources[name] = {**source_cfg, "config": global_cfg}
     if source is not None:
         sources = {source: sources[source]} if source in sources else {}
 
@@ -93,6 +98,11 @@ def sync_all_users(db: Database, config: dict) -> dict:
             results[user_id] = {}
         source_name = row["source"]
         source_cfg = {"enabled": True, "config": decrypt_config(row.get("config") or {})}
+        global_cfg = dict(
+            config.get("sources", {}).get(source_name, {}).get("config", {}) or {}
+        )
+        global_cfg.update(source_cfg["config"])
+        source_cfg["config"] = global_cfg
         user_config = dict(config)
         user_config["sources"] = {source_name: source_cfg}
         plugin_manager = PluginManager(config["system"]["plugins_dir"], user_config)

@@ -8,6 +8,9 @@ import type {
   TaskStatus,
   Topic,
   User,
+  YouTubeAuthUrl,
+  YouTubeTakeoutResult,
+  YouTubeTokenResult,
 } from "../types";
 
 export const api = axios.create({
@@ -130,6 +133,35 @@ export async function testSource(source: string): Promise<{
   message: string;
 }> {
   const { data } = await api.post(`/sources/${source}/test`);
+  return data;
+}
+
+export async function fetchYouTubeAuthUrl(): Promise<YouTubeAuthUrl> {
+  const { data } = await api.get<YouTubeAuthUrl>("/sources/youtube/auth-url");
+  return data;
+}
+
+export async function exchangeYouTubeToken(
+  code: string,
+  state: string,
+): Promise<YouTubeTokenResult> {
+  const { data } = await api.post<YouTubeTokenResult>("/sources/youtube/token", {
+    code,
+    state,
+  });
+  return data;
+}
+
+export async function uploadYouTubeTakeout(
+  file: File,
+): Promise<YouTubeTakeoutResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post<YouTubeTakeoutResult>(
+    "/sources/youtube/takeout",
+    form,
+    { timeout: 60000 },
+  );
   return data;
 }
 

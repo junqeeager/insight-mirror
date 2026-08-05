@@ -1,6 +1,7 @@
 """schema 迁移测试（离线）。"""
 
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 project_root = str(Path(__file__).parent.parent)
@@ -149,6 +150,49 @@ def test_migration_002_dedupes_running_tasks_and_creates_index():
             raise AssertionError("重复 running 任务应被唯一索引拒绝")
         except IntegrityError:
             pass
+    finally:
+        db.close()
+
+
+def test_migration_003_creates_oauth_flows_and_cleanup():
+    db = Database(":memory:")
+    try:
+        db.init_tables()
+        # 模拟旧库：先删除新表，再通过迁移重建
+        with db.engine.begin() as conn:
+            conn.execute(text("DROP TABLE oauth_flows"))
+
+        applied = run_migrations(db=db)
+        assert "003_oauth_flows" in applied
+
+        db.save_oauth_flow(
+            "u1",
+            "state-1",
+            "verifier-1",
+            datetime.now() + timedelta(minutes=5),
+        )
+        db.save_oauth_flow(
+            "u1",
+            "state-expired",
+            "verifier-2",
+            datetime.now() - timedelta(minutes=1),
+        )
+        assert db.cleanup_expired_oauth_flows() == 1
+
+        flow = db.consume_oauth_flow("u1", "state-1")
+        assert flow is not None
+        assert flow["code_verifier"] == "verifier-1"
+        assert db.consume_oauth_flow("u1", "state-1") is None
+
+        # 其他用户不能消费别人的 state
+        db.save_oauth_flow(
+            "u2",
+            "state-1",
+            "verifier-3",
+            datetime.now() + timedelta(minutes=5),
+        )
+        assert db.consume_oauth_flow("u1", "state-1") is None
+        assert db.consume_oauth_flow("u2", "state-1") is not None
     finally:
         db.close()
 

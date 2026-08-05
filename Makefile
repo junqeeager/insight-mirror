@@ -9,6 +9,7 @@ test:
 	$(PYTHON) tests/test_database.py
 	$(PYTHON) tests/test_analysis.py
 	$(PYTHON) tests/test_plugins.py
+	$(PYTHON) tests/test_youtube_plugin.py
 	$(PYTHON) tests/test_secret_guard.py
 	$(PYTHON) tests/test_multiuser.py
 	$(PYTHON) tests/test_migrations.py

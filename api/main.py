@@ -25,6 +25,7 @@ from api.routers import (
     stats,
     sync,
     topics,
+    youtube,
 )
 from core.database import Database
 
@@ -136,6 +137,7 @@ app.include_router(graph.router)
 app.include_router(auth.router)
 app.include_router(account.router)
 app.include_router(sources.router)
+app.include_router(youtube.router)
 app.include_router(sync.router)
 app.include_router(admin.router)
 

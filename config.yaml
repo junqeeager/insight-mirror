@@ -7,6 +7,11 @@ system:
   log_level: INFO
   timezone: Asia/Shanghai
 
+# 应用配置
+app:
+  # OAuth 回调等外部服务使用的公网地址（开发可改为 http://localhost:5173）
+  public_url: https://t.506ikun.space
+
 # 数据库配置
 database:
   # 默认 SQLite；切换 PostgreSQL 时改为 postgresql+psycopg://user:pass@host:5432/dbname
@@ -67,6 +72,17 @@ sources:
     sync:
       interval: daily
 
+  youtube:
+    enabled: false
+    plugin: youtube
+    config:
+      client_id: "${YOUTUBE_CLIENT_ID}"
+      client_secret: "${YOUTUBE_CLIENT_SECRET}"
+      takeout_max_mb: 20
+    sync:
+      interval: daily
+      max_per_sync: 100
+
 # 画像分析配置
 analysis:
   keyword:
@@ -79,6 +95,12 @@ analysis:
   trends:
     window_size: 7
     significance_threshold: 0.1
+  llm:
+    # 可选：用 LLM 生成洞察/报告摘要；默认关闭，无 key 时保持本地分析
+    enabled: false
+    api_base: "https://api.openai.com/v1"
+    model: "gpt-4o-mini"
+    api_key: "${OPENAI_API_KEY}"
 
 # 报告配置
 report:

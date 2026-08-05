@@ -257,6 +257,12 @@ export const mockSources: SourceConfig[] = [
     },
     has_secrets: {},
   },
+  {
+    source: "youtube",
+    enabled: false,
+    config: {},
+    has_secrets: {},
+  },
 ];
 
 export const mockUsers = [

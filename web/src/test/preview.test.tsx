@@ -29,6 +29,9 @@ vi.mock("../api/client", async (importOriginal) => {
     startSync: vi.fn(),
     saveSource: vi.fn(),
     testSource: vi.fn(),
+    fetchYouTubeAuthUrl: vi.fn(),
+    exchangeYouTubeToken: vi.fn(),
+    uploadYouTubeTakeout: vi.fn(),
     refreshProfile: vi.fn(),
     fetchTaskStatus: vi.fn(),
     patchAdminUser: vi.fn(),
@@ -124,6 +127,17 @@ describe("未登录公开预览", () => {
     expect(screen.getAllByDisplayValue("***").length).toBeGreaterThan(0);
     expect(
       screen.getByDisplayValue(/https:\/\/example\.com\/rss\.xml\|科技/),
+    ).toBeInTheDocument();
+  });
+
+  it("登录后设置页展示 YouTube 连接与 Takeout 导入入口", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    renderRoute("/settings");
+    expect(
+      await screen.findByRole("button", { name: "连接 YouTube" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("导入观看历史（Takeout JSON）"),
     ).toBeInTheDocument();
   });
 });

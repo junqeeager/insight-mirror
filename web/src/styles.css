@@ -910,6 +910,23 @@ textarea {
   flex-wrap: wrap;
 }
 
+.youtube-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.youtube-actions .muted {
+  width: 100%;
+  margin: 4px 0 0;
+}
+
+.file-button {
+  cursor: pointer;
+}
+
 .user-table {
   display: flex;
   flex-direction: column;

@@ -20,6 +20,7 @@ feedparser==6.0.14
 # API（第二阶段）
 fastapi==0.141.1
 uvicorn==0.52.0
+python-multipart==0.0.32
 
 # 账号体系
 cryptography==42.0.8

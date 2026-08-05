@@ -176,6 +176,16 @@ tasks = Table(
     ),
 )
 
+oauth_flows = Table(
+    "oauth_flows",
+    metadata,
+    Column("user_id", String, ForeignKey("users.id"), nullable=False),
+    Column("state", String, primary_key=True),
+    Column("code_verifier", String, nullable=False),
+    Column("expires_at", DateTime, nullable=False),
+    Index("idx_oauth_flows_user", "user_id"),
+)
+
 schema_migrations = Table(
     "schema_migrations",
     metadata,
@@ -781,6 +791,7 @@ class Database:
                 sync_state,
                 source_configs,
                 sessions,
+                oauth_flows,
             ):
                 conn.execute(delete(table).where(table.c.user_id == user_id))
             conn.execute(delete(users).where(users.c.id == user_id))
@@ -905,6 +916,49 @@ class Database:
         with self.engine.connect() as conn:
             rows = conn.execute(stmt).mappings().all()
         return [dict(row) for row in rows]
+
+    # ---------- OAuth 授权流 ----------
+
+    def save_oauth_flow(
+        self,
+        user_id: str,
+        state: str,
+        code_verifier: str,
+        expires_at: datetime,
+    ) -> None:
+        """保存一次 OAuth PKCE 授权流（state -> code_verifier，短期有效）。"""
+        with self.engine.begin() as conn:
+            conn.execute(
+                oauth_flows.insert().values(
+                    user_id=user_id,
+                    state=state,
+                    code_verifier=code_verifier,
+                    expires_at=expires_at,
+                )
+            )
+
+    def consume_oauth_flow(self, user_id: str, state: str) -> Optional[dict]:
+        """取回并删除某个授权流；不存在或不属于该用户时返回 None。"""
+        stmt = select(oauth_flows).where(
+            oauth_flows.c.user_id == user_id,
+            oauth_flows.c.state == state,
+        )
+        with self.engine.begin() as conn:
+            row = conn.execute(stmt).mappings().first()
+            if row is None:
+                return None
+            if row["expires_at"] <= datetime.now():
+                conn.execute(delete(oauth_flows).where(oauth_flows.c.state == state))
+                return None
+            conn.execute(delete(oauth_flows).where(oauth_flows.c.state == state))
+        return dict(row)
+
+    def cleanup_expired_oauth_flows(self) -> int:
+        """清理所有已过期的授权流，返回删除条数。"""
+        stmt = delete(oauth_flows).where(oauth_flows.c.expires_at <= datetime.now())
+        with self.engine.begin() as conn:
+            result = conn.execute(stmt)
+        return result.rowcount or 0
 
     @staticmethod
     def _row_to_event(row) -> Event:

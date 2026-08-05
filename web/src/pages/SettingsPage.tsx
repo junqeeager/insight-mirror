@@ -2,14 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import {
   changePassword,
   deleteAccount,
+  exchangeYouTubeToken,
   exportAccountData,
   fetchAdminUsers,
   fetchSources,
+  fetchYouTubeAuthUrl,
   fetchStats,
   patchAdminUser,
   saveSource,
   startSync,
   testSource,
+  uploadYouTubeTakeout,
 } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import {
@@ -57,6 +60,7 @@ const FIELDS: Record<string, FieldDef[]> = {
     },
     { key: "history_path", label: "历史记录路径（auto 自动）" },
   ],
+  youtube: [],
 };
 
 function sourceToValues(source: SourceConfig): Record<string, string> {
@@ -194,6 +198,38 @@ export function SettingsPage() {
     }
   }, [isAuthenticated, isAdmin]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("youtube_code");
+    const state = params.get("youtube_state");
+    if (!code || !state) return;
+    setNotice("");
+    setError("");
+    exchangeYouTubeToken(code, state)
+      .then(async (result) => {
+        setNotice(result.message);
+        const refreshed = await fetchSources();
+        setSources(refreshed);
+        const nextValues: Record<string, Record<string, string>> = {};
+        const nextEnabled: Record<string, boolean> = {};
+        for (const item of refreshed) {
+          nextValues[item.source] = sourceToValues(item);
+          nextEnabled[item.source] = item.enabled;
+        }
+        setValues(nextValues);
+        setEnabled(nextEnabled);
+      })
+      .catch((err) => {
+        setError(
+          (err as { response?: { data?: { detail?: string } } })?.response?.data
+            ?.detail ?? "YouTube 连接失败",
+        );
+      })
+      .finally(() => {
+        window.history.replaceState({}, "", window.location.pathname);
+      });
+  }, []);
+
   const updateValue = useCallback(
     (source: string, key: string, value: string) => {
       setValues((prev) => ({
@@ -258,6 +294,40 @@ export function SettingsPage() {
       setError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data
           ?.detail ?? "同步启动失败",
+      );
+    }
+  }
+
+  async function handleConnectYouTube() {
+    setNotice("");
+    setError("");
+    try {
+      const { url } = await fetchYouTubeAuthUrl();
+      window.location.assign(url);
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? "无法生成 YouTube 授权地址",
+      );
+    }
+  }
+
+  async function handleTakeoutFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setNotice("");
+    setError("");
+    try {
+      const result = await uploadYouTubeTakeout(file);
+      setNotice(
+        `已导入 ${result.imported} 条观看记录（识别 ${result.parsed} 条）`,
+      );
+      window.setTimeout(() => setNotice(""), 8000);
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? "Takeout 导入失败",
       );
     }
   }
@@ -464,6 +534,32 @@ export function SettingsPage() {
                     同步此源
                   </button>
                 </div>
+                {source.source === "youtube" && isAuthenticated && (
+                  <div className="youtube-actions">
+                    {!enabled[source.source] && (
+                      <button
+                        type="button"
+                        className="button primary"
+                        onClick={() => withAuth(handleConnectYouTube)}
+                      >
+                        连接 YouTube
+                      </button>
+                    )}
+                    <label className="button file-button">
+                      导入观看历史（Takeout JSON）
+                      <input
+                        type="file"
+                        accept=".json,application/json"
+                        hidden
+                        onChange={handleTakeoutFile}
+                      />
+                    </label>
+                    <p className="muted">
+                      喜欢/订阅在连接后自动同步；完整观看历史需在 Google
+                      Takeout 导出 YouTube 数据并上传 watch-history.json。
+                    </p>
+                  </div>
+                )}
                 {!isAuthenticated && (
                   <p className="muted">登录后即可保存并同步真实数据源。</p>
                 )}

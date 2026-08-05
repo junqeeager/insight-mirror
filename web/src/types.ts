@@ -92,3 +92,18 @@ export interface TaskStatus {
   error?: string | null;
   results?: Record<string, unknown>;
 }
+
+export interface YouTubeAuthUrl {
+  url: string;
+}
+
+export interface YouTubeTokenResult {
+  ok: boolean;
+  message: string;
+}
+
+export interface YouTubeTakeoutResult {
+  received: number;
+  parsed: number;
+  imported: number;
+}

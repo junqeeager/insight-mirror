@@ -21,7 +21,7 @@
 
 ## ✨ 功能特性
 
-- 📊 **多维度数据采集** - 支持 B站、浏览器历史、GitHub、RSS 等数据源
+- 📊 **多维度数据采集** - 支持 B站、浏览器历史、GitHub、RSS、YouTube（OAuth 喜欢/订阅 + Takeout 观看历史）等数据源
 - 🔌 **插件化架构** - 轻松添加新的数据源
 - 📈 **时间趋势分析** - 查看兴趣变化趋势
 - 🕸️ **关系网络图** - 发现兴趣之间的关联
@@ -223,6 +223,9 @@ make run-web   # 生产同源：uvicorn api.main:app --host 0.0.0.0 --port 8501
 | `DELETE` | `/api/v1/account` | 注销账号并永久删除数据 |
 | `GET/PUT` | `/api/v1/sources` | 查看/保存自己的数据源配置 |
 | `POST` | `/api/v1/sources/{source}/test` | 测试自己的数据源连接 |
+| `GET` | `/api/v1/sources/youtube/auth-url` | 生成 YouTube OAuth 授权地址（PKCE） |
+| `POST` | `/api/v1/sources/youtube/token` | 用授权码换取并加密保存 refresh_token |
+| `POST` | `/api/v1/sources/youtube/takeout` | 上传 Takeout watch-history.json 导入观看历史 |
 | `POST/GET` | `/api/v1/sync` | 触发/查询自己的数据同步任务 |
 | `GET/PATCH` | `/api/v1/admin/users` | 管理员列出/审核/禁用/重置用户 |
 

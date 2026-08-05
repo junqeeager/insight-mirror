@@ -15,6 +15,8 @@ if project_root not in sys.path:
 # 必须在导入 app 前设置；deps.get_db_url 每次请求读取该环境变量
 _tmp_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 os.environ["PROFILE_DB_PATH"] = _tmp_file.name
+os.environ["YOUTUBE_CLIENT_ID"] = "test-client-id"
+os.environ["YOUTUBE_CLIENT_SECRET"] = "test-client-secret"
 _tmp_file.close()
 
 
@@ -27,6 +29,7 @@ atexit.register(_cleanup)
 from fastapi.testclient import TestClient  # noqa: E402
 
 from api.main import app  # noqa: E402
+import api.routers.youtube as youtube_router  # noqa: E402
 from core.auth import hash_password  # noqa: E402
 from core.database import Database  # noqa: E402
 from core.models import Event, EventType  # noqa: E402
@@ -362,6 +365,131 @@ def test_security_headers_and_no_wildcard_cors():
     assert r.headers.get("x-frame-options") == "DENY"
     assert r.headers.get("content-security-policy")
     assert "access-control-allow-origin" not in r.headers
+
+
+def test_youtube_auth_url_requires_login():
+    r = client.get("/api/v1/sources/youtube/auth-url")
+    assert r.status_code == 401
+
+
+def test_youtube_auth_url_and_token_exchange():
+    import json
+    from urllib.parse import parse_qs, urlparse
+
+    r = client.get(
+        "/api/v1/sources/youtube/auth-url", headers=_auth(_ALICE_TOKEN)
+    )
+    assert r.status_code == 200, r.text
+    url = r.json()["url"]
+    assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+    assert "client_id=test-client-id" in url
+    assert "code_challenge=" in url
+    state = parse_qs(urlparse(url).query)["state"][0]
+
+    class FakePlugin:
+        def exchange_code(self, code, verifier):
+            assert code == "the-code"
+            assert verifier
+            return {"refresh_token": "rt-secret", "access_token": "at-1"}
+
+    original = youtube_router._plugin_for
+    youtube_router._plugin_for = lambda db, user_id, config: FakePlugin()
+    try:
+        r = client.post(
+            "/api/v1/sources/youtube/token",
+            json={"code": "the-code", "state": state},
+            headers=_auth(_ALICE_TOKEN),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["ok"] is True
+
+        db = Database(os.environ["PROFILE_DB_PATH"])
+        saved = db.get_source_config(_ALICE_ID, "youtube")
+        db.close()
+        assert saved is not None
+        assert saved["enabled"] is True
+        assert saved["config"]["refresh_token"].startswith("enc:")
+        assert "rt-secret" not in json.dumps(saved["config"])
+
+        # 同一 state 只能消费一次
+        r = client.post(
+            "/api/v1/sources/youtube/token",
+            json={"code": "the-code", "state": state},
+            headers=_auth(_ALICE_TOKEN),
+        )
+        assert r.status_code == 400
+    finally:
+        youtube_router._plugin_for = original
+
+
+def test_youtube_takeout_import_and_validation():
+    import json
+
+    class FakePlugin:
+        takeout_max_mb = 20
+
+        def parse_takeout(self, payload):
+            return [
+                Event(
+                    id="youtube-api-ev-1",
+                    timestamp=datetime(2026, 8, 1, 10, 0),
+                    source="youtube",
+                    event_type=EventType.VIEW,
+                    title="API 测试观看记录",
+                ),
+                Event(
+                    id="youtube-api-ev-2",
+                    timestamp=datetime(2026, 8, 2, 10, 0),
+                    source="youtube",
+                    event_type=EventType.BOOKMARK,
+                    title="API 测试喜欢视频",
+                ),
+            ]
+
+    original = youtube_router._plugin_for
+    youtube_router._plugin_for = lambda db, user_id, config: FakePlugin()
+    try:
+        payload = json.dumps(
+            [{"title": "Watched 测试", "time": "2026-08-01T10:00:00Z"}]
+        ).encode("utf-8")
+        r = client.post(
+            "/api/v1/sources/youtube/takeout",
+            files={"file": ("watch-history.json", payload, "application/json")},
+            headers=_auth(_ALICE_TOKEN),
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body == {"received": 1, "parsed": 2, "imported": 2}
+
+        db = Database(os.environ["PROFILE_DB_PATH"])
+        events = db.get_events(_ALICE_ID, source="youtube")
+        db.close()
+        assert {e.id for e in events} == {"youtube-api-ev-1", "youtube-api-ev-2"}
+
+        # 非法 JSON 拒绝
+        r = client.post(
+            "/api/v1/sources/youtube/takeout",
+            files={"file": ("bad.json", b"not-json", "application/json")},
+            headers=_auth(_ALICE_TOKEN),
+        )
+        assert r.status_code == 400
+
+        # 超过大小限制拒绝
+        class TinyPlugin:
+            takeout_max_mb = 0
+
+            def parse_takeout(self, payload):
+                return []
+
+        youtube_router._plugin_for = lambda db, user_id, config: TinyPlugin()
+        r = client.post(
+            "/api/v1/sources/youtube/takeout",
+            files={"file": ("big.json", b"[]", "application/json")},
+            headers=_auth(_ALICE_TOKEN),
+        )
+        assert r.status_code == 400
+    finally:
+        youtube_router._plugin_for = original
 
 
 if __name__ == "__main__":
