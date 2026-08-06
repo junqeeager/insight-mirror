@@ -122,6 +122,9 @@ async def security_headers(request: Request, call_next):
     elif path.startswith("/assets/"):
         # 构建产物带内容哈希，可以安全长缓存
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    if path.startswith("/static/") or "content_main" in path:
+        # 旧 Streamlit 静态路径统一返回 404，并提示浏览器清除该来源的缓存
+        response.headers["Clear-Site-Data"] = '"cache"'
     return response
 
 

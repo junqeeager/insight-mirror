@@ -208,6 +208,7 @@ def test_spa_served_and_fallback_when_dist_exists():
     # 带扩展名的旧静态资源路径不应回退到 index.html，避免旧前端缓存混跑
     r = client.get("/static/js/content_main.js")
     assert r.status_code == 404
+    assert r.headers.get("clear-site-data") == '"cache"'
     r = client.get("/api/v1/definitely-not-found")
     assert r.status_code == 404
 
