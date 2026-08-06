@@ -115,6 +115,11 @@ export function SettingsPage() {
     fetchSources()
       .then((result) => {
         if (!active) return;
+        if (!Array.isArray(result) || result.length === 0) {
+          setLoadingSources(false);
+          setError("数据源列表为空，请检查服务端配置");
+          return;
+        }
         setSources(result);
         const nextValues: Record<string, Record<string, string>> = {};
         const nextEnabled: Record<string, boolean> = {};
@@ -156,6 +161,7 @@ export function SettingsPage() {
   }, [isAuthenticated, isAdmin]);
 
   const applySourceList = useCallback((result: SourceConfig[]) => {
+    if (!Array.isArray(result) || result.length === 0) return;
     setSources(result);
     const nextValues: Record<string, Record<string, string>> = {};
     const nextEnabled: Record<string, boolean> = {};

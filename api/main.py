@@ -108,6 +108,17 @@ async def security_headers(request: Request, call_next):
         "default-src 'self'; style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; script-src 'self'",
     )
+    path = request.url.path
+    content_type = response.headers.get("content-type", "")
+    if path == "/" or (
+        not path.startswith(("/api/", "/assets/", "/health"))
+        and content_type.startswith("text/html")
+    ):
+        # SPA 入口不缓存，保证每次部署后用户都能拿到最新的 index.html
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    elif path.startswith("/assets/"):
+        # 构建产物带内容哈希，可以安全长缓存
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return response
 
 

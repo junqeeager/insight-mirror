@@ -200,6 +200,17 @@ describe("未登录公开预览", () => {
     expect(screen.getByText(/还没有自动获取的记录/)).toBeInTheDocument();
   });
 
+  it("数据源接口返回空列表时仍保留卡片", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    vi.mocked(client.fetchSources).mockResolvedValue([]);
+    renderRoute("/settings");
+
+    expect(await screen.findByText("哔哩哔哩")).toBeInTheDocument();
+    expect(
+      screen.getByText("数据源列表为空，请检查服务端配置"),
+    ).toBeInTheDocument();
+  });
+
   it("点击自动获取观看历史后轮询并显示导入结果", async () => {
     seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
     renderRoute("/settings");
