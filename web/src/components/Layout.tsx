@@ -11,11 +11,30 @@ const NAV_ITEMS = [
   { to: "/settings", label: "设置", icon: "⚙️" },
 ];
 
+function readSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem("personal_profile_sidebar_collapsed") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeSidebarCollapsed(collapsed: boolean) {
+  try {
+    localStorage.setItem(
+      "personal_profile_sidebar_collapsed",
+      collapsed ? "1" : "0",
+    );
+  } catch {
+    // 存储不可用时忽略，不影响侧边栏交互
+  }
+}
+
 export function Layout() {
   const { user, isAuthenticated, isAdmin, openLogin, logout, requireAuth } =
     useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => localStorage.getItem("personal_profile_sidebar_collapsed") === "1",
+    () => readSidebarCollapsed(),
   );
 
   function handleLogout() {
@@ -25,10 +44,7 @@ export function Layout() {
   function toggleSidebar() {
     setSidebarCollapsed((prev) => {
       const next = !prev;
-      localStorage.setItem(
-        "personal_profile_sidebar_collapsed",
-        next ? "1" : "0",
-      );
+      writeSidebarCollapsed(next);
       return next;
     });
   }

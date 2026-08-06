@@ -703,8 +703,9 @@ export function SettingsPage() {
     const query = sourceQuery.trim().toLowerCase();
     if (!query) return sources;
     return sources.filter((source) => {
-      const meta = SOURCE_META[source.source] ?? { label: source.source };
-      return [source.source, meta.label, meta.description ?? ""]
+      const name = source?.source ?? "";
+      const meta = SOURCE_META[name] ?? { label: name, description: "" };
+      return [name, meta.label ?? "", meta.description ?? ""]
         .join(" ")
         .toLowerCase()
         .includes(query);

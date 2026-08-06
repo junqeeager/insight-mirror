@@ -117,11 +117,16 @@ async def security_headers(request: Request, call_next):
         not path.startswith(("/api/", "/assets/", "/health"))
         and content_type.startswith("text/html")
     ):
-        # SPA 入口不缓存，保证每次部署后用户都能拿到最新的 index.html
+        # SPA 入口不缓存，保证每次部署后用户都能拿到最新的 index.html；
+        # 同时让浏览器清掉本来源的旧 HTTP 缓存（旧 Streamlit/旧 React 残留）
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Clear-Site-Data"] = '"cache"'
     elif path.startswith("/assets/"):
         # 构建产物带内容哈希，可以安全长缓存
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif path == "/legacy-cleanup.js":
+        # 清理脚本每次都要拿最新版，禁止缓存
+        response.headers["Cache-Control"] = "no-store"
     if path.startswith("/static/") or "content_main" in path:
         # 旧 Streamlit 静态路径统一返回 404，并提示浏览器清除该来源的缓存
         response.headers["Clear-Site-Data"] = '"cache"'
@@ -168,6 +173,38 @@ def health():
 async def favicon():
     """避免浏览器对缺失 favicon 的 404 请求。"""
     return Response(status_code=204)
+
+
+@app.get("/stream", include_in_schema=False)
+async def old_streamlit_stream():
+    """旧 Streamlit WebSocket 入口返回 410，避免旧脚本继续运行。"""
+    return Response(
+        status_code=410,
+        content="Streamlit 服务已下线，请刷新页面使用新版界面。",
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-store",
+            "Clear-Site-Data": '"cache"',
+        },
+    )
+
+
+@app.api_route(
+    "/_stcore/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE"],
+    include_in_schema=False,
+)
+async def old_streamlit_stcore(path: str):
+    """旧 Streamlit 内部端点返回 410，不再回退到 SPA。"""
+    return Response(
+        status_code=410,
+        content="Streamlit 服务已下线，请刷新页面使用新版界面。",
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-store",
+            "Clear-Site-Data": '"cache"',
+        },
+    )
 
 
 @app.get("/static/js/content_main.js", include_in_schema=False)

@@ -211,6 +211,20 @@ describe("未登录公开预览", () => {
     ).toBeInTheDocument();
   });
 
+  it("数据源返回畸形条目时搜索不崩溃", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    vi.mocked(client.fetchSources).mockResolvedValue([
+      { config: {} },
+    ] as unknown as typeof mockSources);
+    renderRoute("/settings");
+
+    await waitFor(() => expect(client.fetchSources).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText("搜索数据源"), {
+      target: { value: "哔哩哔哩" },
+    });
+    expect(screen.getByText("没有匹配的数据源。")).toBeInTheDocument();
+  });
+
   it("点击自动获取观看历史后轮询并显示导入结果", async () => {
     seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
     renderRoute("/settings");

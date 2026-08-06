@@ -61,10 +61,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const persist = useCallback((next: StoredAuth | null) => {
     setStored(next);
     if (next) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // 存储不可用时仅保留内存中的登录态
+      }
       setAuthToken(next.token);
     } else {
-      localStorage.removeItem(STORAGE_KEY);
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {
+        // 存储不可用时仅清除内存中的登录态
+      }
       setAuthToken(null);
     }
   }, []);

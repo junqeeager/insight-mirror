@@ -202,14 +202,28 @@ def test_spa_served_and_fallback_when_dist_exists():
     r = client.get("/")
     assert r.status_code == 200
     assert 'id="root"' in r.text
+    assert r.headers.get("clear-site-data") == '"cache"'
     r = client.get("/time")
     assert r.status_code == 200, r.text
     assert 'id="root"' in r.text
+    # 清理脚本由 Vite 从 web/public 复制到构建产物，且禁止缓存
+    if (WEB_DIST / "legacy-cleanup.js").exists():
+        r = client.get("/legacy-cleanup.js")
+        assert r.status_code == 200
+        assert "getRegistrations" in r.text
+        assert r.headers["cache-control"] == "no-store"
     # 旧 Streamlit 入口返回跳转脚本，避免旧前端缓存混跑
     r = client.get("/static/js/content_main.js")
     assert r.status_code == 200
     assert "location.replace('/')" in r.text
     assert r.headers["content-type"].startswith("application/javascript")
+    assert r.headers.get("clear-site-data") == '"cache"'
+    # 旧 Streamlit WebSocket/内部端点彻底下线，不再回退到 SPA
+    r = client.get("/stream")
+    assert r.status_code == 410
+    assert r.headers.get("clear-site-data") == '"cache"'
+    r = client.get("/_stcore/health")
+    assert r.status_code == 410
     assert r.headers.get("clear-site-data") == '"cache"'
     r = client.get("/favicon.ico")
     assert r.status_code == 204
