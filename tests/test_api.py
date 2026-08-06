@@ -205,10 +205,14 @@ def test_spa_served_and_fallback_when_dist_exists():
     r = client.get("/time")
     assert r.status_code == 200, r.text
     assert 'id="root"' in r.text
-    # 带扩展名的旧静态资源路径不应回退到 index.html，避免旧前端缓存混跑
+    # 旧 Streamlit 入口返回跳转脚本，避免旧前端缓存混跑
     r = client.get("/static/js/content_main.js")
-    assert r.status_code == 404
+    assert r.status_code == 200
+    assert "location.replace('/')" in r.text
+    assert r.headers["content-type"].startswith("application/javascript")
     assert r.headers.get("clear-site-data") == '"cache"'
+    r = client.get("/favicon.ico")
+    assert r.status_code == 204
     r = client.get("/api/v1/definitely-not-found")
     assert r.status_code == 404
 

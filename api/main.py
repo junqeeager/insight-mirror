@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -162,6 +162,25 @@ app.include_router(admin.router)
 @app.get("/health", tags=["system"])
 def health():
     return {"status": "ok"}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """避免浏览器对缺失 favicon 的 404 请求。"""
+    return Response(status_code=204)
+
+
+@app.get("/static/js/content_main.js", include_in_schema=False)
+async def old_streamlit_boot():
+    """旧 Streamlit 入口自动跳回 React 首页，并让浏览器清掉旧缓存。"""
+    return Response(
+        content="window.location.replace('/');",
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-store",
+            "Clear-Site-Data": '"cache"',
+        },
+    )
 
 
 # 生产同源托管：uvicorn :8501 同时提供 React SPA 与 /api
