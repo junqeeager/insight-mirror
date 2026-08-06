@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { LoginModal } from "../auth/LoginModal";
@@ -13,13 +14,27 @@ const NAV_ITEMS = [
 export function Layout() {
   const { user, isAuthenticated, isAdmin, openLogin, logout, requireAuth } =
     useAuth();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("personal_profile_sidebar_collapsed") === "1",
+  );
 
   function handleLogout() {
     requireAuth(() => void logout());
   }
 
+  function toggleSidebar() {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem(
+        "personal_profile_sidebar_collapsed",
+        next ? "1" : "0",
+      );
+      return next;
+    });
+  }
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <aside className="sidebar">
         <NavLink to="/" className="brand">
           <span className="brand-icon">🧠</span>
@@ -28,6 +43,14 @@ export function Layout() {
             <small>Personal Cognitive Profile</small>
           </span>
         </NavLink>
+        <button
+          type="button"
+          className="sidebar-toggle"
+          aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+          onClick={toggleSidebar}
+        >
+          {sidebarCollapsed ? "»" : "«"}
+        </button>
 
         <nav className="nav-list" aria-label="主导航">
           {NAV_ITEMS.map((item) => (
@@ -39,8 +62,10 @@ export function Layout() {
                 isActive ? "nav-link active" : "nav-link"
               }
             >
-              <span aria-hidden>{item.icon}</span>
-              {item.label}
+              <span className="nav-icon" aria-hidden>
+                {item.icon}
+              </span>
+              <span className="nav-label">{item.label}</span>
             </NavLink>
           ))}
         </nav>
