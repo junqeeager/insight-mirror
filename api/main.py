@@ -39,6 +39,9 @@ class SPAStaticFiles(StaticFiles):
 
     async def get_response(self, path: str, scope):
         def is_spa_route(p: str) -> bool:
+            if Path(p).name and "." in Path(p).name:
+                # 带扩展名的路径按静态资源处理，避免旧前端缓存/请求被错误回退到 index.html
+                return False
             return not (
                 p.startswith("api/")
                 or p.startswith("health")
