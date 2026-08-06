@@ -83,7 +83,7 @@ export function SourceCard({
       : "未配置";
 
   return (
-    <div className={`source-card glass-card ${enabled ? "enabled" : ""}`}>
+    <div className={`source-card ${enabled ? "enabled" : ""}`}>
       <div className="source-card-main">
         <span className="source-icon" aria-hidden>
           {meta.icon}

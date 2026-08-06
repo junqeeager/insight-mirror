@@ -1171,6 +1171,15 @@ textarea {
 }
 
 body {
+  background: var(--bg);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background:
     radial-gradient(
       1100px 760px at 12% 8%,
@@ -1188,16 +1197,13 @@ body {
       transparent 62%
     ),
     var(--bg);
-  background-attachment: fixed;
 }
 
 .glass-card,
 .sidebar,
 .topbar,
-.card,
 .modal,
-.filter-bar,
-.state-box {
+.bottom-dock {
   background: linear-gradient(
     135deg,
     rgba(255, 255, 255, 0.76),
@@ -1280,12 +1286,18 @@ textarea,
   justify-content: space-between;
   gap: 16px;
   padding: 16px 18px;
+  background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--border);
   border-radius: 14px;
   transition:
     border-color 0.18s ease,
     box-shadow 0.18s ease,
     transform 0.18s ease;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--glass-shadow);
 }
 
 .source-card:hover {
@@ -1400,6 +1412,69 @@ textarea,
   flex-wrap: wrap;
 }
 
+/* 底部液态玻璃 Dock：将原侧边栏改造成悬浮底栏 */
+.app-shell {
+  grid-template-columns: 1fr;
+}
+
+.sidebar {
+  position: fixed;
+  top: auto;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: auto;
+  max-width: calc(100vw - 24px);
+  height: auto;
+  min-height: 0;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  box-shadow:
+    0 18px 48px rgba(15, 23, 42, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  z-index: 60;
+}
+
+.brand {
+  padding: 6px 8px;
+}
+
+.brand strong,
+.brand small {
+  display: none;
+}
+
+.brand-icon {
+  font-size: 22px;
+}
+
+.nav-list {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
+.nav-link {
+  padding: 9px 12px;
+  border-radius: 999px;
+}
+
+.sidebar-footer {
+  display: none;
+}
+
+.main-column {
+  min-height: 100vh;
+}
+
+.content {
+  padding-bottom: 96px;
+}
+
 .secret-input {
   display: flex;
   align-items: center;
@@ -1500,10 +1575,8 @@ textarea,
   .glass-card,
   .sidebar,
   .topbar,
-  .card,
   .modal,
-  .filter-bar,
-  .state-box {
+  .bottom-dock {
     background: #ffffff;
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -1534,5 +1607,26 @@ textarea,
 
   .feed-row {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .sidebar {
+    bottom: 8px;
+    padding: 6px 8px;
+    border-radius: 22px;
+  }
+
+  .brand {
+    display: none;
+  }
+
+  .nav-link {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .nav-link span:first-child {
+    display: none;
   }
 }
