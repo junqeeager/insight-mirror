@@ -1,17 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   changePassword,
   deleteAccount,
+  downloadYouTubeTakeoutHistory,
   exchangeYouTubeToken,
   exportAccountData,
   fetchAdminUsers,
   fetchSources,
+  fetchYouTubeTakeoutHistory,
   fetchYouTubeTakeoutExportStatus,
   fetchYouTubeAuthUrl,
   fetchStats,
   fetchSyncStatus,
   patchAdminUser,
+  reimportYouTubeTakeout,
   saveSource,
   startYouTubeTakeoutExport,
   startSync,
@@ -26,103 +29,15 @@ import {
   PageHeader,
   SourcePill,
 } from "../components/ui";
+import {
+  SourceCard,
+  SourceEditModal,
+  type SyncState,
+} from "../components/SourceSettings";
 import { mockSources, mockStats } from "../data/mock";
 import { downloadBlob } from "../lib/format";
-import type { SourceConfig, Stats, User } from "../types";
-
-interface FieldDef {
-  key: string;
-  label: string;
-  secret?: boolean;
-  kind?: "textarea" | "select";
-  options?: string[];
-}
-
-interface SyncState {
-  taskId: string;
-  phase: "running" | "done" | "error";
-  message: string;
-}
-
-const FIELDS: Record<string, FieldDef[]> = {
-  bilibili: [
-    { key: "cookie", label: "B站 Cookie（SESSDATA=...; bili_jct=...）", secret: true },
-    { key: "csrf", label: "B站 CSRF（bili_jct）", secret: true },
-  ],
-  github: [
-    { key: "token", label: "GitHub Token", secret: true },
-    { key: "username", label: "GitHub 用户名" },
-    { key: "include_repos", label: "包含仓库（逗号分隔）" },
-  ],
-  rss: [
-    {
-      key: "feeds",
-      label: "RSS 订阅源（每行：url|分类，如 https://x.com/rss|科技）",
-      kind: "textarea",
-    },
-  ],
-  browser_history: [
-    {
-      key: "browser",
-      label: "浏览器",
-      kind: "select",
-      options: ["chrome", "firefox", "edge"],
-    },
-    { key: "history_path", label: "历史记录路径（auto 自动）" },
-  ],
-  youtube: [],
-};
-
-function sourceToValues(source: SourceConfig): Record<string, string> {
-  const values: Record<string, string> = {};
-  for (const field of FIELDS[source.source] ?? []) {
-    const raw = source.config?.[field.key];
-    if (field.kind === "textarea" && Array.isArray(raw)) {
-      values[field.key] = raw
-        .map((item) =>
-          typeof item === "string"
-            ? item
-            : `${String((item as { url?: string }).url ?? "")}|${String(
-                (item as { category?: string }).category ?? "",
-              )}`,
-        )
-        .join("\n");
-    } else if (Array.isArray(raw)) {
-      values[field.key] = raw.join(", ");
-    } else {
-      values[field.key] = raw === undefined || raw === null ? "" : String(raw);
-    }
-  }
-  return values;
-}
-
-function valuesToConfig(
-  source: string,
-  values: Record<string, string>,
-): Record<string, unknown> {
-  const config: Record<string, unknown> = {};
-  for (const field of FIELDS[source] ?? []) {
-    const value = values[field.key] ?? "";
-    if (field.kind === "textarea") {
-      config[field.key] = value
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => {
-          const [url = "", category = "rss"] = line.split("|");
-          return { url: url.trim(), category: category.trim() };
-        });
-    } else if (source === "github" && field.key === "include_repos") {
-      config[field.key] = value
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
-    } else {
-      config[field.key] = value;
-    }
-  }
-  return config;
-}
+import { SOURCE_META, sourceToValues } from "../lib/sourceConfig";
+import type { SourceConfig, Stats, User, YouTubeTakeoutFile } from "../types";
 
 export function SettingsPage() {
   const { isAuthenticated, isAdmin, logout, requireAuth, user } = useAuth();
@@ -149,6 +64,31 @@ export function SettingsPage() {
   const syncTimers = useRef<Record<string, number>>({});
   const [takeoutState, setTakeoutState] = useState<SyncState | null>(null);
   const takeoutTimer = useRef<number | null>(null);
+  const [takeoutFiles, setTakeoutFiles] = useState<YouTubeTakeoutFile[]>([]);
+  const [takeoutFilesLoading, setTakeoutFilesLoading] = useState(false);
+  const [editingSource, setEditingSource] = useState<string | null>(null);
+  const [sourceQuery, setSourceQuery] = useState("");
+  const [allSyncState, setAllSyncState] = useState<SyncState | null>(null);
+  const allSyncTimer = useRef<number | null>(null);
+
+  const loadTakeoutFiles = useCallback(async () => {
+    if (!isAuthenticated) {
+      setTakeoutFiles([]);
+      setTakeoutFilesLoading(false);
+      return;
+    }
+    setTakeoutFilesLoading(true);
+    try {
+      const files = await fetchYouTubeTakeoutHistory();
+      setTakeoutFiles(files);
+    } catch (err) {
+      if ((err as { response?: { status?: number } })?.response?.status !== 401) {
+        setTakeoutFiles([]);
+      }
+    } finally {
+      setTakeoutFilesLoading(false);
+    }
+  }, [isAuthenticated]);
 
   useEffect(() => {
     setNotice("");
@@ -163,6 +103,7 @@ export function SettingsPage() {
       }
       setValues(mockValues);
       setEnabled(mockEnabled);
+      setTakeoutFiles([]);
       setError("");
       return;
     }
@@ -170,6 +111,7 @@ export function SettingsPage() {
     let active = true;
     setLoadingSources(true);
     setError("");
+    loadTakeoutFiles();
     fetchSources()
       .then((result) => {
         if (!active) return;
@@ -199,7 +141,7 @@ export function SettingsPage() {
     return () => {
       active = false;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, loadTakeoutFiles]);
 
   useEffect(() => {
     if (isAuthenticated && isAdmin) {
@@ -259,20 +201,34 @@ export function SettingsPage() {
             return;
           }
           const perSource = (task.results ?? {})[source] as
-            | { count?: number; error?: string }
+            | { count?: number; recognized?: number; error?: string }
             | undefined;
           const err = perSource?.error ?? task.error ?? "";
-          if (task.status === "done" && !err) {
+          if (task.status === "done" && perSource && !err) {
             const count = perSource?.count ?? 0;
+            const recognized = perSource?.recognized ?? 0;
+            const alreadyNote =
+              count === 0 && recognized > 0
+                ? `（识别 ${recognized} 条，均为已有记录）`
+                : "";
             setSyncStates((prev) => ({
               ...prev,
               [source]: {
                 taskId,
                 phase: "done",
-                message: `同步完成，新增 ${count} 条`,
+                message: `同步完成，新增 ${count} 条${alreadyNote}`,
               },
             }));
             refreshStatsAndSources();
+          } else if (task.status === "done") {
+            setSyncStates((prev) => ({
+              ...prev,
+              [source]: {
+                taskId,
+                phase: "error",
+                message: `同步失败：${err || "未返回同步结果，请确认数据源已配置并启用"}`,
+              },
+            }));
           } else {
             setSyncStates((prev) => ({
               ...prev,
@@ -309,6 +265,135 @@ export function SettingsPage() {
     [refreshStatsAndSources, clearSyncState],
   );
 
+  const clearAllSyncState = useCallback(() => {
+    if (allSyncTimer.current) {
+      window.clearTimeout(allSyncTimer.current);
+      allSyncTimer.current = null;
+    }
+    setAllSyncState(null);
+  }, []);
+
+  const pollAllSync = useCallback(
+    (taskId: string) => {
+      fetchSyncStatus(taskId)
+        .then((task) => {
+          if (task.status === "running") {
+            setAllSyncState({
+              taskId,
+              phase: "running",
+              message: "正在同步所有数据源…",
+            });
+            allSyncTimer.current = window.setTimeout(
+              () => pollAllSync(taskId),
+              1500,
+            );
+            return;
+          }
+          const results = (task.results ?? {}) as Record<
+            string,
+            { count?: number; recognized?: number; error?: string }
+          >;
+          const entries = Object.entries(results);
+          if (task.status === "done") {
+            const failed = entries
+              .filter(([, result]) => result?.error)
+              .map(([name]) => name);
+            const total = entries.reduce(
+              (sum, [, result]) => sum + (result?.count ?? 0),
+              0,
+            );
+            const success = entries.length - failed.length;
+            const message =
+              entries.length === 0
+                ? "同步完成：没有已启用的数据源"
+                : failed.length === 0
+                  ? `同步完成：${success} 个数据源全部成功，新增 ${total} 条`
+                  : `同步完成：成功 ${success} 个，失败 ${failed.length} 个（${failed.join("、")}），新增 ${total} 条`;
+            setAllSyncState({ taskId, phase: "done", message });
+            refreshStatsAndSources();
+          } else {
+            setAllSyncState({
+              taskId,
+              phase: "error",
+              message: `同步失败：${task.error || "未知错误"}`,
+            });
+          }
+          allSyncTimer.current = window.setTimeout(clearAllSyncState, 30000);
+        })
+        .catch((err) => {
+          const detail =
+            (err as { response?: { data?: { detail?: string } } })?.response
+              ?.data?.detail ?? "";
+          setAllSyncState({
+            taskId,
+            phase: "error",
+            message: `同步状态查询失败：${detail || "请稍后重试"}`,
+          });
+          allSyncTimer.current = window.setTimeout(clearAllSyncState, 30000);
+        });
+    },
+    [refreshStatsAndSources, clearAllSyncState],
+  );
+
+  async function handleSyncAll() {
+    setNotice("");
+    setError("");
+    try {
+      const task = await startSync();
+      setAllSyncState({
+        taskId: task.task_id,
+        phase: "running",
+        message: "正在同步所有数据源…",
+      });
+      pollAllSync(task.task_id);
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response
+        ?.status;
+      const detail = (err as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail;
+      setError(
+        status === 409
+          ? "已有同步任务正在进行，请稍后再试"
+          : detail ?? "同步启动失败",
+      );
+    }
+  }
+
+  async function handleModalSave(
+    sourceName: string,
+    config: Record<string, unknown>,
+    sourceEnabled: boolean,
+  ) {
+    await saveSource(sourceName, { config, enabled: sourceEnabled });
+    const refreshed = await fetchSources();
+    applySourceList(refreshed);
+    const result = await testSource(sourceName);
+    setNotice(`${sourceName} 配置已保存`);
+    return result;
+  }
+
+  async function handleModalSaveAndSync(
+    sourceName: string,
+    config: Record<string, unknown>,
+    sourceEnabled: boolean,
+  ) {
+    await saveSource(sourceName, { config, enabled: sourceEnabled });
+    const refreshed = await fetchSources();
+    applySourceList(refreshed);
+    const task = await startSync(sourceName);
+    clearSyncState(sourceName);
+    setSyncStates((prev) => ({
+      ...prev,
+      [sourceName]: {
+        taskId: task.task_id,
+        phase: "running",
+        message: "正在同步…",
+      },
+    }));
+    pollSync(sourceName, task.task_id);
+    setNotice(`${sourceName} 配置已保存，正在同步…`);
+  }
+
   const clearTakeoutState = useCallback(() => {
     if (takeoutTimer.current) {
       window.clearTimeout(takeoutTimer.current);
@@ -340,6 +425,8 @@ export function SettingsPage() {
               phase: "done",
               message: task.message || `已导入 ${task.imported} 条观看记录`,
             });
+            refreshStatsAndSources();
+            loadTakeoutFiles();
           } else {
             setTakeoutState({
               taskId,
@@ -367,7 +454,7 @@ export function SettingsPage() {
           );
         });
     },
-    [clearTakeoutState],
+    [clearTakeoutState, refreshStatsAndSources, loadTakeoutFiles],
   );
 
   useEffect(() => {
@@ -425,85 +512,10 @@ export function SettingsPage() {
       Object.values(syncTimers.current).forEach((id) => window.clearTimeout(id));
       syncTimers.current = {};
       if (takeoutTimer.current) window.clearTimeout(takeoutTimer.current);
+      if (allSyncTimer.current) window.clearTimeout(allSyncTimer.current);
     },
     [],
   );
-
-  const updateValue = useCallback(
-    (source: string, key: string, value: string) => {
-      setValues((prev) => ({
-        ...prev,
-        [source]: { ...(prev[source] ?? {}), [key]: value },
-      }));
-    },
-    [],
-  );
-
-  async function handleSave(source: string) {
-    setNotice("");
-    setError("");
-    try {
-      await saveSource(source, {
-        config: valuesToConfig(source, values[source] ?? {}),
-        enabled: enabled[source] ?? false,
-      });
-      setNotice(`${source} 配置已保存`);
-      const refreshed = await fetchSources();
-      setSources(refreshed);
-      const nextValues: Record<string, Record<string, string>> = {};
-      const nextEnabled: Record<string, boolean> = {};
-      for (const item of refreshed) {
-        nextValues[item.source] = sourceToValues(item);
-        nextEnabled[item.source] = item.enabled;
-      }
-      setValues(nextValues);
-      setEnabled(nextEnabled);
-      window.setTimeout(() => setNotice(""), 5000);
-    } catch (err) {
-      setError(
-        (err as { response?: { data?: { detail?: string } } })?.response?.data
-          ?.detail ?? "保存失败",
-      );
-    }
-  }
-
-  async function handleTest(source: string) {
-    setNotice("");
-    setError("");
-    try {
-      const result = await testSource(source);
-      setNotice(`${source}: ${result.message}`);
-      window.setTimeout(() => setNotice(""), 6000);
-    } catch (err) {
-      setError(
-        (err as { response?: { data?: { detail?: string } } })?.response?.data
-          ?.detail ?? "连接测试失败",
-      );
-    }
-  }
-
-  async function handleSync(source: string) {
-    setNotice("");
-    setError("");
-    try {
-      const task = await startSync(source);
-      clearSyncState(source);
-      setSyncStates((prev) => ({
-        ...prev,
-        [source]: {
-          taskId: task.task_id,
-          phase: "running",
-          message: "正在同步…",
-        },
-      }));
-      pollSync(source, task.task_id);
-    } catch (err) {
-      const status = (err as { response?: { status?: number } })?.response?.status;
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail;
-      setError(status === 409 ? "已有同类同步任务正在进行，请稍后再试" : detail ?? "同步启动失败");
-    }
-  }
 
   async function handleConnectYouTube() {
     setNotice("");
@@ -530,11 +542,50 @@ export function SettingsPage() {
       setNotice(
         `已导入 ${result.imported} 条观看记录（识别 ${result.parsed} 条）`,
       );
+      refreshStatsAndSources();
+      loadTakeoutFiles();
       window.setTimeout(() => setNotice(""), 8000);
     } catch (err) {
       setError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data
           ?.detail ?? "Takeout 导入失败",
+      );
+    }
+  }
+
+  async function handleReimportTakeout(batchId: string) {
+    setNotice("");
+    setError("");
+    try {
+      const result = await reimportYouTubeTakeout(batchId);
+      const analysisNote =
+        result.imported > 0
+          ? "，画像已重新生成"
+          : "（记录已存在，无需重复导入）";
+      setNotice(
+        `已重新导入 ${result.imported} 条观看记录（识别 ${result.parsed} 条）${analysisNote}`,
+      );
+      refreshStatsAndSources();
+      loadTakeoutFiles();
+      window.setTimeout(() => setNotice(""), 8000);
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? "重新导入失败",
+      );
+    }
+  }
+
+  async function handleDownloadTakeout(batchId: string) {
+    setNotice("");
+    setError("");
+    try {
+      const blob = await downloadYouTubeTakeoutHistory(batchId);
+      downloadBlob(blob, `watch-history-${batchId}.json`);
+    } catch (err) {
+      setError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data
+          ?.detail ?? "下载失败",
       );
     }
   }
@@ -642,6 +693,21 @@ export function SettingsPage() {
     }
   }
 
+  const filteredSources = useMemo(() => {
+    const query = sourceQuery.trim().toLowerCase();
+    if (!query) return sources;
+    return sources.filter((source) => {
+      const meta = SOURCE_META[source.source] ?? { label: source.source };
+      return [source.source, meta.label, meta.description ?? ""]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    });
+  }, [sources, sourceQuery]);
+
+  const editingSourceConfig =
+    sources.find((source) => source.source === editingSource) ?? null;
+
   return (
     <div>
       <PageHeader
@@ -667,181 +733,99 @@ export function SettingsPage() {
       <section className="card">
         <div className="section-heading">
           <h2>我的数据源</h2>
-          <span className="muted">
-            {isAuthenticated
-              ? "凭据加密保存在本地数据库，只对你自己可见"
-              : "预览模式下仅展示示例配置"}
-          </span>
+          <div className="source-section-actions">
+            <span className="muted">
+              {isAuthenticated
+                ? "凭据加密保存在本地数据库，只对你自己可见"
+                : "预览模式下仅展示示例配置"}
+            </span>
+            {isAuthenticated && (
+              <button
+                type="button"
+                className="button primary"
+                disabled={allSyncState?.phase === "running"}
+                onClick={() => withAuth(() => void handleSyncAll())}
+              >
+                {allSyncState?.phase === "running" ? "同步中…" : "同步全部"}
+              </button>
+            )}
+          </div>
         </div>
+
+        {allSyncState && (
+          <div
+            className={`sync-status ${
+              allSyncState.phase === "error"
+                ? "sync-error"
+                : allSyncState.phase === "done"
+                  ? "sync-done"
+                  : ""
+            }`}
+          >
+            {allSyncState.phase === "running" && (
+              <span className="spinner" aria-hidden="true" />
+            )}
+            <span>{allSyncState.message}</span>
+          </div>
+        )}
+
+        <input
+          type="search"
+          className="source-search"
+          aria-label="搜索数据源"
+          placeholder="搜索数据源…"
+          value={sourceQuery}
+          onChange={(e) => setSourceQuery(e.target.value)}
+        />
 
         <div className="source-list">
-          {sources.map((source) => {
-            const sourceValues = values[source.source] ?? {};
-            return (
-              <div className="source-card" key={source.source}>
-                <div className="source-card-header">
-                  <h3>
-                    <SourcePill source={source.source} />
-                    <span className="muted">{source.source}</span>
-                  </h3>
-                  <label className="switch">
-                    <input
-                      type="checkbox"
-                      disabled={!isAuthenticated}
-                      checked={enabled[source.source] ?? source.enabled}
-                      onChange={(e) =>
-                        setEnabled((prev) => ({
-                          ...prev,
-                          [source.source]: e.target.checked,
-                        }))
-                      }
-                    />
-                    <span>启用此数据源</span>
-                  </label>
-                </div>
-
-                <div className="source-fields">
-                  {(FIELDS[source.source] ?? []).map((field) => (
-                    <label className="field" key={field.key}>
-                      <span>{field.label}</span>
-                      {field.kind === "textarea" ? (
-                        <textarea
-                          rows={3}
-                          disabled={!isAuthenticated}
-                          value={sourceValues[field.key] ?? ""}
-                          onChange={(e) =>
-                            updateValue(source.source, field.key, e.target.value)
-                          }
-                        />
-                      ) : field.kind === "select" ? (
-                        <select
-                          disabled={!isAuthenticated}
-                          value={sourceValues[field.key] ?? ""}
-                          onChange={(e) =>
-                            updateValue(source.source, field.key, e.target.value)
-                          }
-                        >
-                          {field.options?.map((option) => (
-                            <option key={option} value={option}>
-                              {option}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          type={field.secret ? "password" : "text"}
-                          disabled={!isAuthenticated}
-                          value={sourceValues[field.key] ?? ""}
-                          placeholder={field.secret ? "已脱敏，留空保持不变" : ""}
-                          onChange={(e) =>
-                            updateValue(source.source, field.key, e.target.value)
-                          }
-                        />
-                      )}
-                    </label>
-                  ))}
-                </div>
-
-                <div className="source-actions">
-                  <button
-                    type="button"
-                    className="button primary"
-                    onClick={() => withAuth(() => handleSave(source.source))}
-                  >
-                    保存
-                  </button>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => withAuth(() => handleTest(source.source))}
-                  >
-                    测试连接
-                  </button>
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => withAuth(() => handleSync(source.source))}
-                  >
-                    同步此源
-                  </button>
-                </div>
-                {syncStates[source.source] && (
-                  <div
-                    className={`sync-status ${
-                      syncStates[source.source].phase === "error"
-                        ? "sync-error"
-                        : syncStates[source.source].phase === "done"
-                          ? "sync-done"
-                          : ""
-                    }`}
-                  >
-                    {syncStates[source.source].phase === "running" && (
-                      <span className="spinner" aria-hidden="true" />
-                    )}
-                    <span>{syncStates[source.source].message}</span>
-                  </div>
-                )}
-                {source.source === "youtube" && isAuthenticated && (
-                  <div className="youtube-actions">
-                    {!enabled[source.source] && (
-                      <button
-                        type="button"
-                        className="button primary"
-                        onClick={() => withAuth(handleConnectYouTube)}
-                      >
-                        连接 YouTube
-                      </button>
-                    )}
-                    <label className="button file-button">
-                      导入观看历史（Takeout JSON）
-                      <input
-                        type="file"
-                        accept=".json,application/json"
-                        hidden
-                        onChange={handleTakeoutFile}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      className="button"
-                      disabled={takeoutState?.phase === "running"}
-                      onClick={() => withAuth(handleTakeoutExport)}
-                    >
-                      自动获取观看历史
-                    </button>
-                    {takeoutState && (
-                      <div
-                        className={`sync-status ${
-                          takeoutState.phase === "error"
-                            ? "sync-error"
-                            : takeoutState.phase === "done"
-                              ? "sync-done"
-                              : ""
-                        }`}
-                      >
-                        {takeoutState.phase === "running" && (
-                          <span className="spinner" aria-hidden="true" />
-                        )}
-                        <span>{takeoutState.message}</span>
-                      </div>
-                    )}
-                    <p className="muted">
-                      喜欢/订阅在连接后自动同步；点击“自动获取观看历史”由后台
-                      直接向 Google 创建 Takeout 导出并导入完整观看历史
-                      （打包通常需要几分钟）。此功能需先重新连接一次 YouTube
-                      授权（新增云端硬盘只读权限），也可手动上传
-                      watch-history.json。
-                    </p>
-                  </div>
-                )}
-                {!isAuthenticated && (
-                  <p className="muted">登录后即可保存并同步真实数据源。</p>
-                )}
-              </div>
-            );
-          })}
+          {filteredSources.map((source) => (
+            <SourceCard
+              key={source.source}
+              source={source}
+              values={values[source.source] ?? {}}
+              enabled={enabled[source.source] ?? source.enabled}
+              syncState={syncStates[source.source]}
+              onEdit={() => withAuth(() => setEditingSource(source.source))}
+            />
+          ))}
+          {filteredSources.length === 0 && (
+            <p className="empty">没有匹配的数据源。</p>
+          )}
         </div>
+        {!isAuthenticated && (
+          <p className="muted">登录后即可保存并同步真实数据源。</p>
+        )}
       </section>
+
+      {editingSourceConfig && (
+        <SourceEditModal
+          key={editingSourceConfig.source}
+          source={editingSourceConfig}
+          values={values[editingSourceConfig.source] ?? {}}
+          enabled={enabled[editingSourceConfig.source] ?? editingSourceConfig.enabled}
+          isAuthenticated={isAuthenticated}
+          takeoutFiles={takeoutFiles}
+          takeoutFilesLoading={takeoutFilesLoading}
+          takeoutState={takeoutState}
+          onClose={() => setEditingSource(null)}
+          onSave={(config, sourceEnabled) =>
+            handleModalSave(editingSourceConfig.source, config, sourceEnabled)
+          }
+          onSaveAndSync={(config, sourceEnabled) =>
+            handleModalSaveAndSync(editingSourceConfig.source, config, sourceEnabled)
+          }
+          onConnectYouTube={() => withAuth(handleConnectYouTube)}
+          onTakeoutFile={handleTakeoutFile}
+          onTakeoutExport={() => withAuth(handleTakeoutExport)}
+          onReimport={(batchId) =>
+            withAuth(() => void handleReimportTakeout(batchId))
+          }
+          onDownload={(batchId) =>
+            withAuth(() => void handleDownloadTakeout(batchId))
+          }
+        />
+      )}
 
       <section className="card">
         <h2>我的数据统计</h2>

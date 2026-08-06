@@ -71,7 +71,7 @@ def test_sync_user_parallel_collects_all_and_callback():
         db.close()
 
 
-def test_sync_user_single_source_and_disabled_skipped():
+def test_sync_user_skips_disabled_unless_explicit():
     db, uid = _db_with_sources(["a", "b"])
     db.set_source_config(uid, "b", {}, enabled=False)
     original_manager = svc.PluginManager
@@ -83,7 +83,32 @@ def test_sync_user_single_source_and_disabled_skipped():
         assert set(all_results) == {"a"}
 
         only_b = svc.sync_user(db, _config(), uid, source="b")
-        assert only_b == {}
+        assert set(only_b) == {"b"}
+        assert only_b["b"]["count"] == 1
+    finally:
+        svc.PluginManager = original_manager
+        svc.sync_source = original_sync
+        db.close()
+
+
+def test_sync_user_explicit_unknown_source_returns_error():
+    db, uid = _db_with_sources(["a"])
+    original_manager = svc.PluginManager
+    original_sync = svc.sync_source
+    svc.PluginManager = _FakeManager
+    svc.sync_source = lambda db_, pm, name, user_id: {"source": name, "count": 1}
+    seen = []
+    try:
+        results = svc.sync_user(
+            db,
+            _config(),
+            uid,
+            source="missing",
+            on_source_done=lambda name, result: seen.append((name, result)),
+        )
+        assert "error" in results["missing"]
+        assert "未配置" in results["missing"]["error"]
+        assert seen == [("missing", results["missing"])]
     finally:
         svc.PluginManager = original_manager
         svc.sync_source = original_sync

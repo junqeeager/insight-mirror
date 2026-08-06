@@ -122,3 +122,13 @@ export interface YouTubeTakeoutExportStatus {
   imported: number;
   parsed: number;
 }
+
+export interface YouTubeTakeoutFile {
+  batch_id: string;
+  created_at: string;
+  record_count: number;
+  imported?: number | null;
+  file_name: string;
+  file_size: number;
+  path?: string;
+}

@@ -55,6 +55,10 @@ class TakeoutAuthError(TakeoutError):
     """Google 拒绝访问（scope 不足或 token 失效）。"""
 
 
+class TakeoutApiDisabledError(TakeoutError):
+    """Google 云项目未启用 Takeout API（需要到 Cloud Console 开启）。"""
+
+
 class TakeoutFormatError(TakeoutError):
     """Takeout 返回格式与预期不符（接口改版或参数错误）。"""
 
@@ -115,6 +119,20 @@ class TakeoutExporter:
                 raise TakeoutAuthError(
                     "缺少 Google 云端硬盘读取权限（takeout-pa 需要 "
                     "drive.readonly）。请在设置页重新连接 YouTube 授权一次。"
+                )
+            if (
+                "has not been used in project" in message.lower()
+                or "access not configured" in message.lower()
+                or "enable it by visiting" in message.lower()
+                or "it is disabled" in message.lower()
+            ):
+                raise TakeoutApiDisabledError(
+                    "Google 云项目尚未启用 Takeout API（HTTP 403）："
+                    f"{message} 请按提示到 Google Cloud Console 启用该 API，"
+                    "等待几分钟后重试；这不是账号授权问题，无需重新连接 "
+                    "YouTube 授权。若 Console 无法加载或该 API 为 Google "
+                    "内部接口，可改用 takeout.google.com 导出 "
+                    "watch-history.json 后手动上传。"
                 )
             raise TakeoutAuthError(
                 "Google 拒绝访问 Takeout（HTTP "

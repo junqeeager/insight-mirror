@@ -229,6 +229,9 @@ make run-web   # 生产同源：uvicorn api.main:app --host 0.0.0.0 --port 8501
 | `POST` | `/api/v1/sources/youtube/takeout` | 上传 Takeout watch-history.json 导入观看历史 |
 | `POST` | `/api/v1/sources/youtube/takeout/export` | 后台自动创建 Takeout 导出并导入观看历史 |
 | `GET` | `/api/v1/sources/youtube/takeout/export/{task_id}` | 查询自动导出任务状态与实时消息 |
+| `GET` | `/api/v1/sources/youtube/takeout/history` | 列出自动获取并保存的观看历史文件 |
+| `POST` | `/api/v1/sources/youtube/takeout/history/{batch_id}/import` | 从服务端保存的自动获取历史重新导入 |
+| `GET` | `/api/v1/sources/youtube/takeout/history/{batch_id}/download` | 下载自动获取的 watch-history.json |
 | `POST/GET` | `/api/v1/sync` | 触发/查询自己的数据同步任务 |
 | `GET/PATCH` | `/api/v1/admin/users` | 管理员列出/审核/禁用/重置用户 |
 

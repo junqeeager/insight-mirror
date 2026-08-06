@@ -58,7 +58,12 @@ def sync_source(
     if events:
         count = db.insert_events(events, user_id)
         db.update_sync_state(user_id, source_name, events[0].id, count)
-    return {"source": source_name, "count": count, "since": since.isoformat()}
+    return {
+        "source": source_name,
+        "count": count,
+        "recognized": len(events),
+        "since": since.isoformat(),
+    }
 
 
 def sync_user(
@@ -76,20 +81,35 @@ def sync_user(
         global_cfg = dict(global_sources.get(name, {}).get("config", {}) or {})
         global_cfg.update(source_cfg.get("config", {}))
         sources[name] = {**source_cfg, "config": global_cfg}
+
+    results = {}
     if source is not None:
-        sources = {source: sources[source]} if source in sources else {}
+        if source not in sources:
+            error_result = {
+                "source": source,
+                "error": "该数据源未配置，请先在设置页保存配置并启用",
+            }
+            results[source] = error_result
+            if on_source_done:
+                on_source_done(source, error_result)
+            return results
+        # 用户明确指定同步某个数据源时，即使当前未启用也执行，
+        # 让同步结果能反映“未配置 / 连接失败”等真实状态。
+        sources = {source: sources[source]}
 
     user_config = dict(config)
     user_config["sources"] = sources
     plugin_manager = PluginManager(config["system"]["plugins_dir"], user_config)
     plugin_manager.discover()
 
-    enabled = {
-        name: source_cfg
-        for name, source_cfg in sources.items()
-        if source_cfg.get("enabled", False)
-    }
-    results = {}
+    if source is not None:
+        enabled = dict(sources)
+    else:
+        enabled = {
+            name: source_cfg
+            for name, source_cfg in sources.items()
+            if source_cfg.get("enabled", False)
+        }
 
     def _run_one(name: str) -> tuple:
         return name, sync_source(db, plugin_manager, name, user_id)

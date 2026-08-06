@@ -14,6 +14,7 @@ if project_root not in sys.path:
 import httpx  # noqa: E402
 
 from plugins.youtube.takeout import (  # noqa: E402
+    TakeoutApiDisabledError,
     TakeoutAuthError,
     TakeoutError,
     TakeoutExportFailed,
@@ -192,6 +193,37 @@ def test_create_export_missing_scope_raises_auth_error():
     except TakeoutAuthError as exc:
         assert "云端硬盘" in str(exc)
         assert "重新连接" in str(exc)
+    finally:
+        exporter.close()
+
+
+def test_create_export_api_disabled_raises_actionable_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={
+                "error": {
+                    "message": (
+                        "Takeout API has not been used in project 123 before "
+                        "or it is disabled. Enable it by visiting "
+                        "https://console.developers.google.com/apis/api/"
+                        "takeout-pa.googleapis.com/overview?project=123 "
+                        "then retry."
+                    )
+                }
+            },
+        )
+
+    exporter = _exporter(
+        client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    try:
+        exporter.create_export()
+        assert False, "应抛出 TakeoutApiDisabledError"
+    except TakeoutApiDisabledError as exc:
+        assert "云项目尚未启用" in str(exc)
+        assert "无需重新连接" in str(exc)
+        assert "takeout.google.com" in str(exc)
     finally:
         exporter.close()
 

@@ -42,7 +42,7 @@ class Plugin(DataSourcePlugin):
 
     @property
     def version(self) -> str:
-        return "1.1.0"
+        return "1.2.0"
 
     @property
     def icon(self) -> str:
@@ -198,11 +198,13 @@ class Plugin(DataSourcePlugin):
         return message if len(message) <= 300 else message[:297] + "..."
 
     def fetch(self, since: datetime) -> List[Event]:
-        """增量拉取喜欢的视频与新增订阅（自动刷新 access token）。"""
+        """全量拉取喜欢的视频与订阅（自动刷新 access token，幂等去重）。"""
         token = self._refresh_access_token()
         headers = self._headers(token)
-        events = self._fetch_liked(since, headers)
-        events.extend(self._fetch_subscriptions(since, headers))
+        # 喜欢/订阅列表整体较小，每次全量拉取并通过稳定主键幂等写入，
+        # 避免增量时间窗把连接前的历史喜欢/订阅漏掉。
+        events = self._fetch_liked(None, headers)
+        events.extend(self._fetch_subscriptions(None, headers))
         events.sort(key=lambda event: event.timestamp)
         return events
 
@@ -218,7 +220,9 @@ class Plugin(DataSourcePlugin):
     def _headers(token: str) -> dict:
         return {"Authorization": f"Bearer {token}"}
 
-    def _fetch_liked(self, since: datetime, headers: dict) -> List[Event]:
+    def _fetch_liked(
+        self, since: Optional[datetime], headers: dict
+    ) -> List[Event]:
         """分页拉取喜欢视频播放列表（playlistId=LL）。"""
         events = []
         page_token = ""
@@ -245,14 +249,18 @@ class Plugin(DataSourcePlugin):
                 break
         return events
 
-    def _parse_liked_item(self, item: dict, since: datetime) -> Optional[Event]:
+    def _parse_liked_item(
+        self, item: dict, since: Optional[datetime]
+    ) -> Optional[Event]:
         """把 playlistItem 转为“喜欢视频”事件。"""
         snippet = item.get("snippet", {}) or {}
         content = item.get("contentDetails", {}) or {}
         resource = snippet.get("resourceId", {}) or {}
         video_id = content.get("videoId") or resource.get("videoId", "")
         published = self._parse_time(snippet.get("publishedAt", ""))
-        if not video_id or published is None or published < since:
+        if not video_id or published is None or (
+            since is not None and published < since
+        ):
             return None
         title = str(snippet.get("title") or "未命名视频").strip()
         return Event(
@@ -273,7 +281,9 @@ class Plugin(DataSourcePlugin):
             },
         )
 
-    def _fetch_subscriptions(self, since: datetime, headers: dict) -> List[Event]:
+    def _fetch_subscriptions(
+        self, since: Optional[datetime], headers: dict
+    ) -> List[Event]:
         """分页拉取本人订阅的频道。"""
         events = []
         page_token = ""
@@ -296,13 +306,17 @@ class Plugin(DataSourcePlugin):
                 break
         return events
 
-    def _parse_subscription_item(self, item: dict, since: datetime) -> Optional[Event]:
+    def _parse_subscription_item(
+        self, item: dict, since: Optional[datetime]
+    ) -> Optional[Event]:
         """把 subscription 转为“订阅频道”事件。"""
         snippet = item.get("snippet", {}) or {}
         resource = snippet.get("resourceId", {}) or {}
         channel_id = resource.get("channelId", "")
         published = self._parse_time(snippet.get("publishedAt", ""))
-        if not channel_id or published is None or published < since:
+        if not channel_id or published is None or (
+            since is not None and published < since
+        ):
             return None
         channel = str(snippet.get("title") or "未知频道").strip()
         return Event(

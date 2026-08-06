@@ -33,6 +33,9 @@ vi.mock("../api/client", async (importOriginal) => {
     fetchYouTubeAuthUrl: vi.fn(),
     exchangeYouTubeToken: vi.fn(),
     uploadYouTubeTakeout: vi.fn(),
+    fetchYouTubeTakeoutHistory: vi.fn(),
+    reimportYouTubeTakeout: vi.fn(),
+    downloadYouTubeTakeoutHistory: vi.fn(),
     startYouTubeTakeoutExport: vi.fn(),
     fetchYouTubeTakeoutExportStatus: vi.fn(),
     refreshProfile: vi.fn(),
@@ -49,6 +52,12 @@ function renderRoute(path: string) {
       </MemoryRouter>
     </AuthProvider>,
   );
+}
+
+async function openYouTubeModal() {
+  const buttons = await screen.findAllByRole("button", { name: "配置" });
+  fireEvent.click(buttons[buttons.length - 1]);
+  return screen.findByRole("dialog");
 }
 
 function seedAuth(user: {
@@ -88,6 +97,10 @@ beforeEach(() => {
   vi.mocked(client.fetchGraph).mockResolvedValue(mockGraph);
   vi.mocked(client.fetchLatestProfile).mockResolvedValue(mockProfile);
   vi.mocked(client.fetchSources).mockResolvedValue(mockSources);
+  vi.mocked(client.testSource).mockResolvedValue({
+    ok: true,
+    message: "连接成功",
+  });
   vi.mocked(client.exchangeYouTubeToken).mockResolvedValue({
     ok: true,
     message: "YouTube 已连接",
@@ -105,6 +118,15 @@ beforeEach(() => {
     batch_id: "batch-1",
     error: null,
   });
+  vi.mocked(client.fetchYouTubeTakeoutHistory).mockResolvedValue([]);
+  vi.mocked(client.reimportYouTubeTakeout).mockResolvedValue({
+    received: 2,
+    parsed: 2,
+    imported: 2,
+  });
+  vi.mocked(client.downloadYouTubeTakeoutHistory).mockResolvedValue(
+    new Blob(["[]"], { type: "application/json" }),
+  );
   vi.mocked(client.fetchAdminUsers).mockResolvedValue(mockUsers);
   vi.mocked(client.startSync).mockResolvedValue({
     task_id: "task-abc",
@@ -146,20 +168,21 @@ describe("未登录公开预览", () => {
     expect(client.fetchSources).not.toHaveBeenCalled();
   });
 
-  it("设置页未登录只读展示示例配置", () => {
+  it("设置页未登录展示示例数据源卡片", () => {
     renderRoute("/settings");
-    expect(screen.getByDisplayValue("chrome")).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("***").length).toBeGreaterThan(0);
-    expect(
-      screen.getByDisplayValue(/https:\/\/example\.com\/rss\.xml\|科技/),
-    ).toBeInTheDocument();
+    expect(screen.getAllByText("配置").length).toBeGreaterThan(0);
+    expect(screen.getByText("哔哩哔哩")).toBeInTheDocument();
+    expect(screen.getByText("RSS 订阅")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("chrome")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("***")).not.toBeInTheDocument();
   });
 
   it("登录后设置页展示 YouTube 连接与 Takeout 导入入口", async () => {
     seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
     renderRoute("/settings");
+    await openYouTubeModal();
     expect(
-      await screen.findByRole("button", { name: "连接 YouTube" }),
+      screen.getByRole("button", { name: "连接 YouTube" }),
     ).toBeInTheDocument();
     expect(
       screen.getByLabelText("导入观看历史（Takeout JSON）"),
@@ -167,12 +190,21 @@ describe("未登录公开预览", () => {
     expect(
       screen.getByRole("button", { name: "自动获取观看历史" }),
     ).toBeInTheDocument();
+    const takeoutLink = screen.getByRole("link", {
+      name: "Google Takeout 导出页",
+    });
+    expect(takeoutLink).toHaveAttribute(
+      "href",
+      "https://takeout.google.com",
+    );
+    expect(screen.getByText(/还没有自动获取的记录/)).toBeInTheDocument();
   });
 
   it("点击自动获取观看历史后轮询并显示导入结果", async () => {
     seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
     renderRoute("/settings");
-    const button = await screen.findByRole("button", {
+    await openYouTubeModal();
+    const button = screen.getByRole("button", {
       name: "自动获取观看历史",
     });
     fireEvent.click(button);
@@ -187,6 +219,43 @@ describe("未登录公开预览", () => {
     );
     expect(
       await screen.findByText("已导入 5 条观看记录"),
+    ).toBeInTheDocument();
+  });
+
+  it("设置页展示自动获取的观看历史并可重新导入", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    vi.mocked(client.fetchYouTubeTakeoutHistory).mockResolvedValue([
+      {
+        batch_id: "batch-9",
+        created_at: "2026-08-06T09:00:00",
+        record_count: 3,
+        imported: 3,
+        file_name: "watch-history.json",
+        file_size: 1024,
+        path: "/home/user/aicode/data/youtube/takeout/u1/batch-9/watch-history.json",
+      },
+    ]);
+    renderRoute("/settings");
+    await openYouTubeModal();
+
+    expect(
+      screen.getByText("自动获取的观看历史"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/3 条记录/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "/home/user/aicode/data/youtube/takeout/u1/batch-9/watch-history.json",
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重新导入" }));
+    await waitFor(() =>
+      expect(client.reimportYouTubeTakeout).toHaveBeenCalledWith("batch-9"),
+    );
+    expect(
+      await screen.findByText(
+        "已重新导入 2 条观看记录（识别 2 条），画像已重新生成",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -210,11 +279,11 @@ describe("未登录公开预览", () => {
     ).toBeInTheDocument();
   });
 
-  it("点击同步此源后轮询并显示卡片内结果", async () => {
+  it("编辑弹窗中保存并同步此源后显示卡片内结果", async () => {
     seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
     renderRoute("/settings");
-    const buttons = await screen.findAllByRole("button", { name: "同步此源" });
-    fireEvent.click(buttons[buttons.length - 1]);
+    await openYouTubeModal();
+    fireEvent.click(screen.getByRole("button", { name: "保存并同步此源" }));
 
     await waitFor(() =>
       expect(client.startSync).toHaveBeenCalledWith("youtube"),
@@ -226,6 +295,149 @@ describe("未登录公开预览", () => {
       await screen.findByText("同步完成，新增 3 条"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/task-abc/)).not.toBeInTheDocument();
+  });
+
+  it("同步未配置的数据源时显示失败而不是新增 0 条", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    vi.mocked(client.fetchSyncStatus).mockResolvedValue({
+      task_id: "task-abc",
+      status: "done",
+      results: {
+        youtube: {
+          source: "youtube",
+          error: "该数据源未配置，请先在设置页保存配置并启用",
+        },
+      },
+    });
+    renderRoute("/settings");
+    await openYouTubeModal();
+    fireEvent.click(screen.getByRole("button", { name: "保存并同步此源" }));
+
+    expect(
+      await screen.findByText(
+        "同步失败：该数据源未配置，请先在设置页保存配置并启用",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/同步完成，新增 0 条/)).not.toBeInTheDocument();
+  });
+
+  it("同步新增 0 条但识别到记录时提示均为已有记录", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    vi.mocked(client.fetchSyncStatus).mockResolvedValue({
+      task_id: "task-abc",
+      status: "done",
+      results: {
+        youtube: {
+          source: "youtube",
+          count: 0,
+          recognized: 2,
+        },
+      },
+    });
+    renderRoute("/settings");
+    await openYouTubeModal();
+    fireEvent.click(screen.getByRole("button", { name: "保存并同步此源" }));
+
+    expect(
+      await screen.findByText(
+        "同步完成，新增 0 条（识别 2 条，均为已有记录）",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("同步全部后显示汇总结果", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    renderRoute("/settings");
+    fireEvent.click(await screen.findByRole("button", { name: "同步全部" }));
+
+    await waitFor(() => expect(client.startSync).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(client.fetchSyncStatus).toHaveBeenCalledWith("task-abc"),
+    );
+    expect(
+      await screen.findByText("同步完成：1 个数据源全部成功，新增 3 条"),
+    ).toBeInTheDocument();
+  });
+
+  it("编辑弹窗保存后自动测试连接", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    renderRoute("/settings");
+    const buttons = await screen.findAllByRole("button", { name: "配置" });
+    fireEvent.click(buttons[0]);
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(client.saveSource).toHaveBeenCalledWith("bilibili", {
+        config: { cookie: "***", csrf: "***" },
+        enabled: true,
+      }),
+    );
+    expect(client.testSource).toHaveBeenCalledWith("bilibili");
+    expect(await screen.findByText("连接成功")).toBeInTheDocument();
+  });
+
+  it("RSS 弹窗动态订阅行会转换为 feeds 配置", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    renderRoute("/settings");
+    const buttons = await screen.findAllByRole("button", { name: "配置" });
+    fireEvent.click(buttons[3]);
+    await screen.findByRole("dialog");
+
+    fireEvent.change(screen.getByLabelText("订阅源 URL 1"), {
+      target: { value: "https://example.com/feed.xml" },
+    });
+    fireEvent.change(screen.getByLabelText("订阅源分类 1"), {
+      target: { value: "科技" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "移除订阅源 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(client.saveSource).toHaveBeenCalledWith("rss", {
+        config: {
+          feeds: [
+            { url: "https://example.com/feed.xml", category: "科技" },
+          ],
+        },
+        enabled: false,
+      }),
+    );
+  });
+
+  it("高级 JSON 编辑后按 JSON 配置保存", async () => {
+    seedAuth({ id: "u1", username: "alice", role: "user", status: "active" });
+    renderRoute("/settings");
+    const buttons = await screen.findAllByRole("button", { name: "配置" });
+    fireEvent.click(buttons[2]);
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("tab", { name: "高级 JSON" }));
+
+    fireEvent.change(screen.getByLabelText("高级 JSON 配置"), {
+      target: {
+        value: JSON.stringify(
+          {
+            token: "***",
+            username: "alice",
+            include_repos: ["repo-a", "repo-b"],
+          },
+          null,
+          2,
+        ),
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(client.saveSource).toHaveBeenCalledWith("github", {
+        config: {
+          token: "***",
+          username: "alice",
+          include_repos: ["repo-a", "repo-b"],
+        },
+        enabled: false,
+      }),
+    );
   });
 
   it("YouTube 连接成功回跳后自动同步并显示结果", async () => {

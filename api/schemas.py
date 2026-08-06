@@ -257,6 +257,18 @@ class YouTubeTakeoutExportStatusOut(BaseModel):
     parsed: int = 0
 
 
+class YouTubeTakeoutFileOut(BaseModel):
+    """自动获取并保存到服务端的 Takeout 观看历史文件信息"""
+
+    batch_id: str
+    created_at: str
+    record_count: int = 0
+    imported: Optional[int] = None
+    file_name: str = "watch-history.json"
+    file_size: int = 0
+    path: str = ""
+
+
 class AdminUserPatch(BaseModel):
     """管理员更新用户请求"""
 

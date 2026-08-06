@@ -2,6 +2,7 @@
 
 import atexit
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -665,6 +666,17 @@ def test_youtube_takeout_export_task_lifecycle():
         assert body["imported"] == 1
         assert "已导入 1 条" in body["message"]
         assert body["batch_id"] == "batch-api-test"
+        assert "画像已重新生成" in body["message"]
+
+        # 自动获取的观看历史已持久化到用户目录
+        store = youtube_router._user_takeout_dir(
+            youtube_router.get_config(), _ADMIN_ID
+        )
+        batch_dir = store / "batch-api-test"
+        assert (batch_dir / "watch-history.json").is_file()
+        meta = youtube_router._read_takeout_meta(batch_dir)
+        assert meta["record_count"] == 1
+        assert meta["imported"] == 1
 
         # 用户隔离：其他用户不能读该任务
         r = client.get(
@@ -675,6 +687,107 @@ def test_youtube_takeout_export_task_lifecycle():
     finally:
         youtube_router._plugin_for = original_plugin
         youtube_router.TakeoutExporter = original_exporter
+        store = youtube_router._user_takeout_dir(
+            youtube_router.get_config(), _ADMIN_ID
+        )
+        shutil.rmtree(store, ignore_errors=True)
+
+
+def test_youtube_takeout_history_list_import_download():
+    """保存的自动获取历史：列表、重新导入（幂等）、下载、用户隔离。"""
+
+    class FakePlugin:
+        takeout_max_mb = 20
+
+        def parse_takeout(self, payload):
+            return [
+                Event(
+                    id=f"youtube-saved-{i}",
+                    timestamp=datetime(2026, 8, 1, 10, 0),
+                    source="youtube",
+                    event_type=EventType.VIEW,
+                    title=entry.get("title", "Watched 保存记录"),
+                )
+                for i, entry in enumerate(payload)
+            ]
+
+    original = youtube_router._plugin_for
+    youtube_router._plugin_for = lambda db, user_id, config: FakePlugin()
+    config = youtube_router.get_config()
+    payload = [
+        {
+            "title": "Watched 已保存记录",
+            "titleUrl": "https://www.youtube.com/watch?v=saved123",
+            "time": "2026-08-01T10:00:00Z",
+        }
+    ]
+    youtube_router._save_takeout_payload(
+        config, _ADMIN_ID, "batch-saved-1", payload
+    )
+    try:
+        # 列表
+        r = client.get(
+            "/api/v1/sources/youtube/takeout/history",
+            headers=_auth(_ADMIN_TOKEN),
+        )
+        assert r.status_code == 200
+        items = r.json()
+        assert any(item["batch_id"] == "batch-saved-1" for item in items)
+
+        # 重新导入
+        r = client.post(
+            "/api/v1/sources/youtube/takeout/history/batch-saved-1/import",
+            headers=_auth(_ADMIN_TOKEN),
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body == {"received": 1, "parsed": 1, "imported": 1}
+        db = Database(os.environ["PROFILE_DB_PATH"])
+        events = db.get_events(_ADMIN_ID, source="youtube")
+        db.close()
+        assert any(e.id == "youtube-saved-0" for e in events)
+
+        # 幂等：重复导入返回 0
+        r = client.post(
+            "/api/v1/sources/youtube/takeout/history/batch-saved-1/import",
+            headers=_auth(_ADMIN_TOKEN),
+        )
+        assert r.status_code == 200
+        assert r.json()["imported"] == 0
+
+        # 下载
+        r = client.get(
+            "/api/v1/sources/youtube/takeout/history/batch-saved-1/download",
+            headers=_auth(_ADMIN_TOKEN),
+        )
+        assert r.status_code == 200
+        assert "watch-history" in r.headers["content-disposition"]
+        assert r.json() == payload
+
+        # 用户隔离：其他用户看不到也不能导入
+        r = client.get(
+            "/api/v1/sources/youtube/takeout/history",
+            headers=_auth(_ALICE_TOKEN),
+        )
+        assert all(
+            item["batch_id"] != "batch-saved-1" for item in r.json()
+        )
+        r = client.post(
+            "/api/v1/sources/youtube/takeout/history/batch-saved-1/import",
+            headers=_auth(_ALICE_TOKEN),
+        )
+        assert r.status_code == 404
+        r = client.get(
+            "/api/v1/sources/youtube/takeout/history/batch-saved-1/download",
+            headers=_auth(_ALICE_TOKEN),
+        )
+        assert r.status_code == 404
+    finally:
+        youtube_router._plugin_for = original
+        shutil.rmtree(
+            youtube_router._user_takeout_dir(config, _ADMIN_ID),
+            ignore_errors=True,
+        )
 
 
 def test_youtube_takeout_export_requires_connection():
@@ -692,6 +805,95 @@ def test_youtube_takeout_export_requires_connection():
         assert "未连接 YouTube" in r.json()["detail"]
     finally:
         youtube_router._plugin_for = original
+
+
+def test_youtube_takeout_export_empty_archive_errors_and_keeps_file():
+    """导出成功但归档为空时任务报错，且保留文件供手动处理。"""
+    db = Database(os.environ["PROFILE_DB_PATH"])
+    erin_id = db.create_user(
+        "erin", hash_password("erin-pass-123"), role="user", status="active"
+    )
+    db.close()
+    erin_token = _login("erin", "erin-pass-123")
+
+    class EmptyTakeoutPlugin:
+        refresh_token = "test-refresh"
+        takeout_max_archive_mb = 200
+        takeout_max_total_mb = 1024
+
+        def _refresh_access_token(self):
+            return "test-access"
+
+        def parse_takeout(self, payload):
+            return []
+
+        def cleanup(self):
+            pass
+
+    class EmptyTakeoutExporter:
+        def __init__(self, **kwargs):
+            pass
+
+        def create_export(self):
+            return "batch-empty"
+
+        def poll_until_ready(self, export_id, progress=None):
+            return {"status": "COMPLETED", "archives": []}
+
+        def download_archives(self, data, target_dir=None, progress=None):
+            return []
+
+        def extract_watch_history(self, archive_paths):
+            return []
+
+        def close(self):
+            pass
+
+    original_plugin = youtube_router._plugin_for
+    original_exporter = youtube_router.TakeoutExporter
+    youtube_router._plugin_for = (
+        lambda db, user_id, config: EmptyTakeoutPlugin()
+    )
+    youtube_router.TakeoutExporter = EmptyTakeoutExporter
+    try:
+        r = client.post(
+            "/api/v1/sources/youtube/takeout/export",
+            headers=_auth(erin_token),
+        )
+        assert r.status_code == 202, r.text
+        task_id = r.json()["task_id"]
+
+        body = {}
+        for _ in range(50):
+            r = client.get(
+                f"/api/v1/sources/youtube/takeout/export/{task_id}",
+                headers=_auth(erin_token),
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            if body["status"] != "running":
+                break
+            time.sleep(0.1)
+        assert body["status"] == "error", body
+        assert "未找到 watch-history.json" in (body.get("error") or "")
+
+        # 空文件仍保留，方便手动排查
+        batch_dir = youtube_router._batch_takeout_dir(
+            youtube_router.get_config(), erin_id, "batch-empty"
+        )
+        assert (batch_dir / "watch-history.json").is_file()
+        assert youtube_router._read_takeout_payload(
+            youtube_router.get_config(), erin_id, "batch-empty"
+        ) == []
+    finally:
+        youtube_router._plugin_for = original_plugin
+        youtube_router.TakeoutExporter = original_exporter
+        shutil.rmtree(
+            youtube_router._user_takeout_dir(
+                youtube_router.get_config(), erin_id
+            ),
+            ignore_errors=True,
+        )
 
 
 def test_youtube_takeout_export_cooldown():
@@ -717,6 +919,44 @@ def test_youtube_takeout_export_cooldown():
         )
         assert r.status_code == 409, r.text
         assert "分钟内已执行过" in r.json()["detail"]
+    finally:
+        youtube_router._plugin_for = original
+
+
+def test_youtube_takeout_export_error_task_allows_retry():
+    """上次自动导出失败时不触发 5 分钟冷却，可立即重试。"""
+    db = Database(os.environ["PROFILE_DB_PATH"])
+    fiona_id = db.create_user(
+        "fiona", hash_password("fiona-pass-123"), role="user", status="active"
+    )
+    db.create_task("failed-export-task", fiona_id, "takeout_export", {})
+    db.update_task(
+        "failed-export-task",
+        status="error",
+        error="上次自动导出失败",
+    )
+    db.close()
+    fiona_token = _login("fiona", "fiona-pass-123")
+
+    class FailingPlugin:
+        refresh_token = "test-refresh"
+
+        def _refresh_access_token(self):
+            raise RuntimeError("测试中断，不发起真实导出")
+
+        def cleanup(self):
+            pass
+
+    original = youtube_router._plugin_for
+    youtube_router._plugin_for = (
+        lambda db, user_id, config: FailingPlugin()
+    )
+    try:
+        r = client.post(
+            "/api/v1/sources/youtube/takeout/export",
+            headers=_auth(fiona_token),
+        )
+        assert r.status_code == 202, r.text
     finally:
         youtube_router._plugin_for = original
 

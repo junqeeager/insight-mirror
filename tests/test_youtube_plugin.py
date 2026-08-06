@@ -133,7 +133,7 @@ def test_exchange_code_returns_refresh_token():
     assert tokens["access_token"] == "at-1"
 
 
-def test_fetch_liked_and_subscriptions_since():
+def test_fetch_liked_and_subscriptions_full_ignores_since():
     plugin = _attach_mock(_plugin())
     events = plugin.fetch(datetime(2026, 8, 1, 0, 0, 0))
 
@@ -150,10 +150,14 @@ def test_fetch_liked_and_subscriptions_since():
     assert liked[0].url == "https://www.youtube.com/watch?v=vid-a"
 
     subs = [e for e in events if e.metadata["kind"] == "subscription"]
-    assert len(subs) == 1
-    assert subs[0].id == "youtube-sub-UC-new"
-    assert subs[0].event_type == EventType.CREATE
-    assert subs[0].title == "订阅了 新技术频道"
+    assert len(subs) == 2
+    assert {s.id for s in subs} == {
+        "youtube-sub-UC-new",
+        "youtube-sub-UC-old",
+    }
+    sub_new = next(s for s in subs if s.id == "youtube-sub-UC-new")
+    assert sub_new.event_type == EventType.CREATE
+    assert sub_new.title == "订阅了 新技术频道"
 
 
 def test_fetch_requires_refresh_token():
